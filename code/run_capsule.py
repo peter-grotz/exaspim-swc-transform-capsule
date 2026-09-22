@@ -7,6 +7,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 from allensdk.core.swc import Compartment, Morphology
@@ -24,6 +25,8 @@ from exaspim_swc_transform.reference import (
     disable_overlay_normalization,
     resolve_geometry,
 )
+from exaspim_swc_processing.registration import dataset_name
+from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT as BUCKET
 from exaspim_swc_transform.s3_stage import resolve_dataset, s3_client
 from exaspim_swc_transform.transform_resolution import resolve_inputs
 
@@ -150,7 +153,21 @@ def run() -> int:
     # and geometry are ever read, and 20 of 60 processed assets never published them, so
     # both are reconstructed from the registration's own record instead.
     disable_overlay_normalization()
-    bucket, dataset = resolve_dataset(args.processed_dataset)
+    # The bundle may be an S3 URI, a dataset name, a sample id, or a Code Ocean mount.
+    # All but the sample id carry the dataset name; that one needs an S3 lookup, which
+    # cannot parse the other forms.
+    bucket = urlparse(args.processed_dataset).netloc or BUCKET
+    dataset = dataset_name(args.processed_dataset, str(transform_dir))
+    if dataset is None:
+        try:
+            bucket, dataset = resolve_dataset(args.processed_dataset)
+        except (ValueError, FileNotFoundError) as error:
+            logger.error(
+                "Could not determine the processed dataset from %r: %s",
+                args.processed_dataset,
+                error,
+            )
+            return 1
     loaded_geom, resampled_geom = resolve_geometry(
         s3_client(), bucket, dataset, resolved.dataset_id
     )
