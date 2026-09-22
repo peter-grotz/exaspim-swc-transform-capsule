@@ -94,9 +94,11 @@ def transform_one(
     ccf, ants_exaspim, resampled_img, brain_np, resampled_np = images
     morph = read_swc(swc_path, add_offset=True)
     coords = np.array([[c["x"], c["y"], c["z"]] for c in morph.compartment_list])
-    prepped = pipeline.preprocess_coords(coords, brain_np, resampled_np, swc_path.stem)
+    # cell_filename=None skips ImageVisualizer overlay rendering, which is the only
+    # consumer of voxel data in this stage.
+    prepped = pipeline.preprocess_coords(coords, brain_np, resampled_np, None)
     idx_pts, _ = pipeline.apply_transforms_to_points(
-        prepped, resampled_img, ants_exaspim, ccf, swc_path.stem
+        prepped, resampled_img, ants_exaspim, ccf, None
     )
     transformed = []
     for index, node in enumerate(morph.compartment_list):
@@ -136,8 +138,10 @@ def run() -> int:
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
+    # RegistrationPipeline requires an output_dir but writes there only for the overlays,
+    # which are disabled below.
     scratch = Path("/scratch") if Path("/scratch").is_dir() else Path("/tmp")
-    debug_dir = scratch / "exaspim_swc_transform_debug" / resolved.dataset_id
+    debug_dir = scratch / "exaspim_swc_transform"
     debug_dir.mkdir(parents=True, exist_ok=True)
 
     pipeline = RegistrationPipeline(
