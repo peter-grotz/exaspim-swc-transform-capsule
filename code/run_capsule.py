@@ -11,7 +11,13 @@ from pathlib import Path
 import numpy as np
 from allensdk.core.swc import Compartment, Morphology
 from aind_exaspim_register_cells import RegistrationPipeline
-from exaspim_swc_processing.stage import build_stage_process, resolve_code, write_stage_process
+from exaspim_swc_processing.stage import (
+    UPSTREAM_STAGES,
+    build_stage_process,
+    carry_forward,
+    resolve_code,
+    write_stage_process,
+)
 from exaspim_swc_transform.io_swc import read_swc
 from exaspim_swc_transform.transform_resolution import resolve_inputs
 
@@ -121,6 +127,11 @@ def run() -> int:
 
         transform_dir = stage_registration_bundle(args.processed_dataset)
 
+    # Nextflow hands the next stage only this stage's results, so the upstream outputs
+    # have to be republished or they leave the chain.
+    carried = carry_forward(DATA_DIR, RESULTS_DIR, UPSTREAM_STAGES)
+    logger.info("Carried forward: %s", ", ".join(carried) or "nothing")
+
     resolved = resolve_inputs(Path(transform_dir), args.df_asset, "")
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
@@ -196,6 +207,7 @@ def run() -> int:
                 "failed": failures,
                 "dataset_id": resolved.dataset_id,
                 "acquisition_carried_forward": bool(carried_acquisition),
+                "stages_carried_forward": carried,
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             notes=(
