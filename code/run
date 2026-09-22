@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -ex
+
+pip list > /results/pip_list.txt
+
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+python -u run_capsule.py "$@"
