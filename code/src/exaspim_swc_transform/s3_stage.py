@@ -41,6 +41,11 @@ def _client():
     )
 
 
+def s3_client():
+    """Return an anonymous S3 client for the public data bucket."""
+    return _client()
+
+
 def resolve_dataset(
     spec: str,
     bucket: str = BUCKET_DEFAULT,
@@ -146,8 +151,6 @@ def stage_registration_bundle(
     dataset_id = match.group(0)
 
     align = f"{ds}/ccf_alignment"
-    meta = f"{align}/registration_metadata"
-
     # Explicit source -> destination mapping is intentional.
     #
     # acquisition.json lives at the processed-dataset root in S3, but
@@ -167,17 +170,12 @@ def stage_registration_bundle(
             f"ccf_alignment/registration_metadata/"
             f"acquisition_{dataset_id}.json",
         ),
-        (
-            f"{meta}/{dataset_id}_10um_loaded_zarr_img.nii.gz",
-            f"ccf_alignment/registration_metadata/"
-            f"{dataset_id}_10um_loaded_zarr_img.nii.gz",
-        ),
-        (
-            f"{meta}/{dataset_id}_10um_resampled_zarr_img.nii.gz",
-            f"ccf_alignment/registration_metadata/"
-            f"{dataset_id}_10um_resampled_zarr_img.nii.gz",
-        ),
     ]
+
+    # The two reference volumes under registration_metadata/ used to be staged here,
+    # 7.8 GB for 794492. Nothing reads their voxels and 20 of 60 processed assets never
+    # published them, so their geometry is derived instead -- see
+    # exaspim_swc_transform.reference.
 
     cli = _client()
     dest = Path(dest_root)

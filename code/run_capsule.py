@@ -7,6 +7,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 from allensdk.core.swc import Compartment, Morphology
@@ -19,6 +20,14 @@ from exaspim_swc_processing.stage import (
     write_stage_process,
 )
 from exaspim_swc_transform.io_swc import read_swc
+from exaspim_swc_transform.reference import (
+    build_reference_images,
+    disable_overlay_normalization,
+    resolve_geometry,
+)
+from exaspim_swc_processing.registration import dataset_name
+from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT as BUCKET
+from exaspim_swc_transform.s3_stage import resolve_dataset, s3_client
 from exaspim_swc_transform.transform_resolution import resolve_inputs
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
@@ -51,25 +60,6 @@ def parse_args() -> argparse.Namespace:
         help="Abort on the first SWC that fails rather than skipping it.",
     )
     return parser.parse_args()
-
-
-def _image_array(image: object) -> np.ndarray:
-    """Return an ndarray view of an ANTs image.
-
-    ``view()`` is zero-copy; ``numpy()`` duplicates multi-GB volumes and has triggered OOM
-    kills on this stage.
-
-    Parameters
-    ----------
-    image : object
-        An ANTs image.
-
-    Returns
-    -------
-    np.ndarray
-        A view of the image data.
-    """
-    return image.view() if hasattr(image, "view") else image.numpy()
 
 
 def transform_one(
@@ -158,8 +148,39 @@ def run() -> int:
         level=2,
         manual_transform_path=resolved.manual_transform_path,
     )
-    ccf, ants_exaspim, brain_img, resampled_img = pipeline.load_images()
-    images = (ccf, ants_exaspim, resampled_img, _image_array(brain_img), _image_array(resampled_img))
+
+    # load_images() would read two reference volumes of 1.4-1.8 GB each. Only their shape
+    # and geometry are ever read, and 20 of 60 processed assets never published them, so
+    # both are reconstructed from the registration's own record instead.
+    disable_overlay_normalization()
+    # The bundle may be an S3 URI, a dataset name, a sample id, or a Code Ocean mount.
+    # All but the sample id carry the dataset name; that one needs an S3 lookup, which
+    # cannot parse the other forms.
+    bucket = urlparse(args.processed_dataset).netloc or BUCKET
+    dataset = dataset_name(args.processed_dataset, str(transform_dir))
+    if dataset is None:
+        try:
+            bucket, dataset = resolve_dataset(args.processed_dataset)
+        except (ValueError, FileNotFoundError) as error:
+            logger.error(
+                "Could not determine the processed dataset from %r: %s",
+                args.processed_dataset,
+                error,
+            )
+            return 1
+    loaded_geom, resampled_geom = resolve_geometry(
+        s3_client(), bucket, dataset, resolved.dataset_id
+    )
+    reference = build_reference_images(
+        resolved.ccf_path, resolved.exaspim_template_path, loaded_geom, resampled_geom
+    )
+    images = (
+        reference.ccf,
+        reference.exaspim_template,
+        reference.resampled_image,
+        reference.brain,
+        reference.resampled,
+    )
 
     swc_paths = sorted(Path(args.swc_dir).rglob("*.swc"))
     logger.info("Transforming %d reconstruction(s)", len(swc_paths))
