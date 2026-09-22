@@ -1,11 +1,4 @@
-"""Transform exaSPIM SWC reconstructions from specimen space into CCF space.
-
-Code Ocean glue around ``aind_exaspim_register_cells.RegistrationPipeline``. The ANTs work
-and its pinned numeric stack stay here rather than in ``exaspim-swc-processing``: that
-library is installed into every capsule and supports Python 3.11-3.13, while ``allensdk``
-pins ``numpy==1.23.5`` and cannot build above 3.11. The library supplies naming and the
-stage metadata record.
-"""
+"""Transform exaSPIM SWC reconstructions from specimen space into CCF space."""
 
 import argparse
 import logging
