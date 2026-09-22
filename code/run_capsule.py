@@ -168,6 +168,20 @@ def run() -> int:
     shutil.rmtree(debug_dir, ignore_errors=True)
     transformed = len(swc_paths) - len(failures)
 
+    # Carry the acquisition forward. The resample stage needs its
+    # coordinate_transformations to convert specimen-space reconstructions between voxel
+    # and physical units, and this is the only stage that has the file.
+    carried_acquisition = None
+    acquisition_source = Path(resolved.acquisition_file)
+    if acquisition_source.is_file():
+        carried_acquisition = output_root / "acquisition.json"
+        carried_acquisition.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(acquisition_source, carried_acquisition)
+        logger.info("Carried acquisition forward to %s", carried_acquisition)
+    else:
+        logger.warning("No acquisition file at %s; downstream scaling will be derived",
+                       acquisition_source)
+
     write_stage_process(
         build_stage_process(
             STEP_NAME,
@@ -188,6 +202,7 @@ def run() -> int:
                 "transformed_swc_count": transformed,
                 "failed": failures,
                 "dataset_id": resolved.dataset_id,
+                "acquisition_carried_forward": bool(carried_acquisition),
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             notes=(
