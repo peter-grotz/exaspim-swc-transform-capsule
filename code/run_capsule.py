@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from exaspim_swc_transform.io_swc import read_swc
 from exaspim_swc_transform.reference import (
     build_reference_images,
     disable_overlay_normalization,
-    resolve_geometry,
+    resolve_registration,
 )
 from exaspim_swc_processing.registration import dataset_name
 from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT as BUCKET
@@ -124,7 +125,32 @@ def run() -> int:
     carried = carry_forward(DATA_DIR, RESULTS_DIR, UPSTREAM_STAGES)
     logger.info("Carried forward: %s", ", ".join(carried) or "nothing")
 
-    resolved = resolve_inputs(Path(transform_dir), args.df_asset, "")
+    # The registration must be read before the inputs are resolved: it names the
+    # template->CCF asset this sample was registered against, and the mounted default is
+    # a different version.
+    bucket = urlparse(args.processed_dataset).netloc or BUCKET
+    dataset = dataset_name(args.processed_dataset, str(transform_dir))
+    if dataset is None:
+        try:
+            bucket, dataset = resolve_dataset(args.processed_dataset)
+        except (ValueError, FileNotFoundError) as error:
+            logger.error(
+                "Could not determine the processed dataset from %r: %s",
+                args.processed_dataset,
+                error,
+            )
+            return 1
+    sample = re.search(r"\d{5,}", dataset)
+    registration = resolve_registration(
+        s3_client(), bucket, dataset, sample.group(0) if sample else ""
+    )
+
+    resolved = resolve_inputs(
+        Path(transform_dir),
+        args.df_asset,
+        "",
+        template_to_ccf_asset=registration.template_to_ccf_asset or "",
+    )
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
@@ -153,26 +179,11 @@ def run() -> int:
     # and geometry are ever read, and 20 of 60 processed assets never published them, so
     # both are reconstructed from the registration's own record instead.
     disable_overlay_normalization()
-    # The bundle may be an S3 URI, a dataset name, a sample id, or a Code Ocean mount.
-    # All but the sample id carry the dataset name; that one needs an S3 lookup, which
-    # cannot parse the other forms.
-    bucket = urlparse(args.processed_dataset).netloc or BUCKET
-    dataset = dataset_name(args.processed_dataset, str(transform_dir))
-    if dataset is None:
-        try:
-            bucket, dataset = resolve_dataset(args.processed_dataset)
-        except (ValueError, FileNotFoundError) as error:
-            logger.error(
-                "Could not determine the processed dataset from %r: %s",
-                args.processed_dataset,
-                error,
-            )
-            return 1
-    loaded_geom, resampled_geom = resolve_geometry(
-        s3_client(), bucket, dataset, resolved.dataset_id
-    )
     reference = build_reference_images(
-        resolved.ccf_path, resolved.exaspim_template_path, loaded_geom, resampled_geom
+        resolved.ccf_path,
+        resolved.exaspim_template_path,
+        registration.loaded,
+        registration.resampled,
     )
     images = (
         reference.ccf,

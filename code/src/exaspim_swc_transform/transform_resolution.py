@@ -7,8 +7,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_EXASPIM_TO_CCF_AFFINE = "/data/reg_exaspim_template_to_ccf_25um_v1.5/0GenericAffine.mat"
-DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP = "/data/reg_exaspim_template_to_ccf_25um_v1.5/1InverseWarp.nii.gz"
+TEMPLATE_TO_CCF_ROOT = "/data"
+DEFAULT_TEMPLATE_TO_CCF_ASSET = "reg_exaspim_template_to_ccf_25um_v1.5"
+DEFAULT_EXASPIM_TO_CCF_AFFINE = f"{TEMPLATE_TO_CCF_ROOT}/{DEFAULT_TEMPLATE_TO_CCF_ASSET}/0GenericAffine.mat"
+DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP = (
+    f"{TEMPLATE_TO_CCF_ROOT}/{DEFAULT_TEMPLATE_TO_CCF_ASSET}/1InverseWarp.nii.gz"
+)
 DEFAULT_CCF_TEMPLATE = "/data/allen_mouse_ccf/average_template/average_template_10.nii.gz"
 DEFAULT_EXASPIM_TEMPLATE = (
     "/data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz"
@@ -219,8 +223,9 @@ def resolve_inputs(
     resampled_zarr_image_path: str = "",
     sample_to_exaspim_affine_path: str = "",
     sample_to_exaspim_inverse_warp_path: str = "",
-    exaspim_to_ccf_affine_path: str = DEFAULT_EXASPIM_TO_CCF_AFFINE,
-    exaspim_to_ccf_inverse_warp_path: str = DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP,
+    exaspim_to_ccf_affine_path: str = "",
+    exaspim_to_ccf_inverse_warp_path: str = "",
+    template_to_ccf_asset: str = "",
     ccf_template_path: str = DEFAULT_CCF_TEMPLATE,
     exaspim_template_path: str = DEFAULT_EXASPIM_TEMPLATE,
     manual_df_filename: str = "",
@@ -286,8 +291,19 @@ def resolve_inputs(
             "sample->exaSPIM inverse warp",
         )
 
-    exaspim_to_ccf_affine = _require_file(exaspim_to_ccf_affine_path, "exaSPIM->CCF affine")
-    exaspim_to_ccf_invwarp = _require_file(exaspim_to_ccf_inverse_warp_path, "exaSPIM->CCF inverse warp")
+    # Each sample must use the template->CCF transform it was registered against. The
+    # version is recorded per registration; every asset observed so far names v1.4 while
+    # the default here is v1.5, so falling back is a last resort, not the normal path.
+    asset = template_to_ccf_asset or DEFAULT_TEMPLATE_TO_CCF_ASSET
+    asset_root = f"{TEMPLATE_TO_CCF_ROOT}/{asset}"
+    exaspim_to_ccf_affine = _require_file(
+        exaspim_to_ccf_affine_path or f"{asset_root}/0GenericAffine.mat",
+        f"exaSPIM->CCF affine from {asset}",
+    )
+    exaspim_to_ccf_invwarp = _require_file(
+        exaspim_to_ccf_inverse_warp_path or f"{asset_root}/1InverseWarp.nii.gz",
+        f"exaSPIM->CCF inverse warp from {asset}",
+    )
     ccf_path = _require_file(ccf_template_path, "CCF template")
     exaspim_template = _require_file(exaspim_template_path, "ExaSPIM template")
     manual_transform_path = _resolve_manual_df(manual_df_path, dataset_id, manual_df_filename)

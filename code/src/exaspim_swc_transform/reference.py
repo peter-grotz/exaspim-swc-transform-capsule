@@ -23,6 +23,7 @@ import numpy as np
 from exaspim_swc_processing.reference import apply_geometry, reference_arrays
 from exaspim_swc_processing.registration import (
     HEADER_FETCH_BYTES,
+    find_template_to_ccf_asset,
     PROCESSING_RECORD,
     VolumeGeometry,
     loaded_geometry,
@@ -37,6 +38,26 @@ from exaspim_swc_processing.registration import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RegistrationInputs:
+    """What the registration recorded about the space it worked in.
+
+    Attributes
+    ----------
+    loaded : VolumeGeometry
+        Geometry of the volume the registration read from the zarr.
+    resampled : VolumeGeometry
+        Geometry of the isotropically resampled volume.
+    template_to_ccf_asset : str | None
+        Name of the template-to-CCF data asset the registration used, or ``None`` when
+        the record names none and the caller must fall back to its default.
+    """
+
+    loaded: VolumeGeometry
+    resampled: VolumeGeometry
+    template_to_ccf_asset: str | None
 
 
 @dataclass(frozen=True)
@@ -112,9 +133,9 @@ def _published_geometry(client, bucket: str, key: str) -> VolumeGeometry | None:
     return parse_nifti_geometry(body["Body"].read())
 
 
-def resolve_geometry(
+def resolve_registration(
     client, bucket: str, dataset: str, dataset_id: str
-) -> tuple[VolumeGeometry, VolumeGeometry]:
+) -> RegistrationInputs:
     """Obtain both reference geometries, deriving or reading them as available.
 
     Two disjoint groups of processed assets exist, and neither source covers both:
@@ -141,15 +162,26 @@ def resolve_geometry(
 
     Returns
     -------
-    tuple[VolumeGeometry, VolumeGeometry]
-        Geometry of the loaded and resampled volumes.
+    RegistrationInputs
+        Both geometries and the template-to-CCF asset the registration used.
 
     Raises
     ------
     RegistrationRecordError
         If the geometry can be neither derived nor read.
     """
-    derived = _derive_geometry(client, bucket, dataset)
+    record = _load_record(client, bucket, dataset)
+    asset = find_template_to_ccf_asset(record) if record is not None else None
+    if asset is None:
+        logger.warning(
+            "No template-to-CCF asset named in the record for %s; the caller's default "
+            "will be used, which may not be the version this sample was registered with",
+            dataset,
+        )
+    else:
+        logger.info("Registration used template-to-CCF asset %s", asset)
+
+    derived = _derive_geometry(client, bucket, record)
     published = tuple(
         _published_geometry(client, bucket, registration_volume_key(dataset, dataset_id, name))
         for name in ("loaded", "resampled")
@@ -159,23 +191,21 @@ def resolve_geometry(
         for name, from_record, from_header in zip(("loaded", "resampled"), derived, published):
             reconcile(from_record, from_header, name)
         logger.info("Derived geometry matches both published volumes")
-        return derived
+        return RegistrationInputs(derived[0], derived[1], asset)
     if derived is not None:
         logger.info("No published volumes; using the geometry derived from the record")
-        return derived
+        return RegistrationInputs(derived[0], derived[1], asset)
     if all(p is not None for p in published):
         logger.info("Registration record is unusable; read geometry from published headers")
-        return published[0], published[1]
+        return RegistrationInputs(published[0], published[1], asset)
     raise RegistrationRecordError(
         f"Cannot obtain reference geometry for {dataset}: the registration record does "
         "not describe a 10 um pass and the reference volumes were not published"
     )
 
 
-def _derive_geometry(
-    client, bucket: str, dataset: str
-) -> tuple[VolumeGeometry, VolumeGeometry] | None:
-    """Derive both geometries from the registration record, if it is usable.
+def _load_record(client, bucket: str, dataset: str) -> dict | None:
+    """Fetch the registration's own record, if it exists.
 
     Parameters
     ----------
@@ -188,13 +218,39 @@ def _derive_geometry(
 
     Returns
     -------
+    dict | None
+        The decoded record, or ``None`` when it cannot be read.
+    """
+    try:
+        body = client.get_object(Bucket=bucket, Key=f"{dataset}/{PROCESSING_RECORD}")["Body"]
+    except Exception as error:  # noqa: BLE001 - an absent record is an expected case
+        logger.info("Cannot read the registration record (%s)", type(error).__name__)
+        return None
+    return json.loads(body.read())
+
+
+def _derive_geometry(
+    client, bucket: str, record: dict | None
+) -> tuple[VolumeGeometry, VolumeGeometry] | None:
+    """Derive both geometries from the registration record, if it is usable.
+
+    Parameters
+    ----------
+    client : object
+        An S3 client, for reading the zarr level's ``.zarray``.
+    bucket : str
+        Bucket holding the dataset.
+    record : dict | None
+        The decoded registration record.
+
+    Returns
+    -------
     tuple[VolumeGeometry, VolumeGeometry] | None
         The geometries, or ``None`` when the record does not describe a 10 um pass.
     """
+    if record is None:
+        return None
     try:
-        record = json.loads(
-            client.get_object(Bucket=bucket, Key=f"{dataset}/{PROCESSING_RECORD}")["Body"].read()
-        )
         pass_ = parse_registration_record(record)
         zarray = json.loads(
             client.get_object(Bucket=bucket, Key=zarr_level_key(pass_))["Body"].read()
@@ -202,8 +258,8 @@ def _derive_geometry(
     except RegistrationRecordError as error:
         logger.info("Cannot derive geometry from the record: %s", error)
         return None
-    except Exception as error:  # noqa: BLE001 - an absent or unreadable record is expected
-        logger.info("Cannot read the registration record (%s)", type(error).__name__)
+    except Exception as error:  # noqa: BLE001 - an unreadable zarr level is expected
+        logger.info("Cannot read the zarr level (%s)", type(error).__name__)
         return None
 
     loaded = loaded_geometry(pass_, zarr_shape(zarray))
