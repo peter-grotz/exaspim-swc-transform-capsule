@@ -46,6 +46,23 @@ def _candidate_paths(root: Path, rels: list[str]) -> list[Path]:
     return [root / rel for rel in rels]
 
 
+def _pick_first_existing(candidates: list[Path], what: str) -> str:
+    """Return the first candidate that exists, rather than insisting on exactly one."""
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    debug = "\n".join(f"  - {p}" for p in candidates)
+    raise FileNotFoundError(f"Missing {what}. Candidates:\n{debug}")
+
+
+def _optional_existing(candidates: list[Path]) -> str:
+    """Return the first candidate that exists, or an empty string if none do."""
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return ""
+
+
 def _pick_existing(candidates: list[Path], what: str) -> str:
     hits = [c for c in candidates if c.is_file()]
     if len(hits) != 1:
@@ -215,39 +232,30 @@ def resolve_inputs(
     if acquisition_file_path:
         acquisition_file = _require_file(acquisition_file_path, "acquisition file")
     else:
+        # Older samples file the acquisition under registration_metadata/; newer ones
+        # only publish it at the dataset root.
         acquisition_candidates = _candidate_paths(
-            meta_root,
-            [
-                f"acquisition_{dataset_id}.json",
-                "acquisition.json",
-            ],
+            meta_root, [f"acquisition_{dataset_id}.json", "acquisition.json"]
+        ) + _candidate_paths(
+            bundle_root, ["acquisition.json", "../acquisition.json"]
         )
-        acquisition_file = _pick_existing(acquisition_candidates, "acquisition file")
+        acquisition_file = _pick_first_existing(acquisition_candidates, "acquisition file")
 
+    # The reference volumes are optional. Nothing reads their voxels, and their geometry
+    # is derived from the registration record, so a dataset that never published them
+    # transforms exactly as one that did. See exaspim_swc_transform.reference.
     if loaded_zarr_image_path:
         brain_path = _require_file(loaded_zarr_image_path, "10um loaded zarr image")
     else:
-        brain_path = _pick_existing(
-            _candidate_paths(
-                meta_root,
-                [
-                    f"{dataset_id}_10um_loaded_zarr_img.nii.gz",
-                ],
-            ),
-            "10um loaded zarr image",
+        brain_path = _optional_existing(
+            _candidate_paths(meta_root, [f"{dataset_id}_10um_loaded_zarr_img.nii.gz"])
         )
 
     if resampled_zarr_image_path:
         resampled_brain_path = _require_file(resampled_zarr_image_path, "10um resampled zarr image")
     else:
-        resampled_brain_path = _pick_existing(
-            _candidate_paths(
-                meta_root,
-                [
-                    f"{dataset_id}_10um_resampled_zarr_img.nii.gz",
-                ],
-            ),
-            "10um resampled zarr image",
+        resampled_brain_path = _optional_existing(
+            _candidate_paths(meta_root, [f"{dataset_id}_10um_resampled_zarr_img.nii.gz"])
         )
 
     if sample_to_exaspim_affine_path:
