@@ -18,9 +18,9 @@ COPY git-ask-pass /
 # exists, use it directly and drop this line.
 RUN mamba install -y python=3.11 && mamba clean -afy
 
+# The library is pinned to a commit, not a branch: the layer is keyed on the text of
+# this command, so '@dev' would reuse a cached layer and silently install nothing
+# new. Bump the SHA whenever the library changes.
 RUN pip install -U --no-cache-dir \
     "git+https://github.com/AllenNeuralDynamics/aind_exaspim_register_cells.git" \
-    # Pinned to a commit, not a branch: Docker keys this layer on the text of the
-    # line, so '@dev' reuses a cached layer and silently installs nothing new.
-    # Bump this SHA whenever the library changes.
     "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@dbfbb6543421f4271210067dd3e16514c296dae5"
