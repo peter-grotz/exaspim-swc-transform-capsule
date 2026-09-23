@@ -4,4 +4,17 @@ set -ex
 pip list > /results/pip_list.txt
 
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+# Code Ocean's App Builder passes its parameters as ordered values, not flags:
+#   ./run <swc_dir> <processed_dataset> <df_asset> <experimenters>
+# A direct command-line invocation passes flags instead. Accept both, so the same
+# entry point works from the pipeline and from a shell.
+if [ -n "${1:-}" ] && [ "${1#-}" = "$1" ]; then
+  args=()
+  [ -n "${1:-}" ] && args+=(--swc-dir "${1}")
+  [ -n "${2:-}" ] && args+=(--processed-dataset "${2}")
+  [ -n "${3:-}" ] && args+=(--df-asset "${3}")
+  [ -n "${4:-}" ] && args+=(--experimenters "${4}")
+  set -- ${args[@]+"${args[@]}"}
+fi
+
 python -u run_capsule.py "$@"
