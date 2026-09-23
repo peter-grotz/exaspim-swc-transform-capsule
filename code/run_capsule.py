@@ -10,8 +10,24 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import numpy as np
-from allensdk.core.swc import Compartment, Morphology
 from aind_exaspim_register_cells import RegistrationPipeline
+from allensdk.core.swc import Compartment, Morphology
+from exaspim_swc_transform.io_swc import read_swc
+from exaspim_swc_transform.reference import (
+    ReferenceImages,
+    build_reference_images,
+    disable_overlay_normalization,
+    resolve_geometry,
+)
+from exaspim_swc_transform.s3_stage import (
+    BUCKET_DEFAULT,
+    resolve_dataset,
+    s3_client,
+    stage_registration_bundle,
+)
+from exaspim_swc_transform.transform_resolution import ResolvedInputs, resolve_inputs
+
+from exaspim_swc_processing.registration import dataset_name
 from exaspim_swc_processing.stage import (
     UPSTREAM_STAGES,
     build_stage_process,
@@ -19,16 +35,6 @@ from exaspim_swc_processing.stage import (
     resolve_code,
     write_stage_process,
 )
-from exaspim_swc_transform.io_swc import read_swc
-from exaspim_swc_transform.reference import (
-    build_reference_images,
-    disable_overlay_normalization,
-    resolve_geometry,
-)
-from exaspim_swc_processing.registration import dataset_name
-from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT as BUCKET
-from exaspim_swc_transform.s3_stage import resolve_dataset, s3_client
-from exaspim_swc_transform.transform_resolution import resolve_inputs
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", "/results"))
@@ -65,7 +71,7 @@ def parse_args() -> argparse.Namespace:
 def transform_one(
     swc_path: Path,
     pipeline: RegistrationPipeline,
-    images: tuple,
+    images: ReferenceImages,
     destination: Path,
 ) -> None:
     """Transform a single reconstruction into CCF space and write it.
@@ -76,19 +82,18 @@ def transform_one(
         Reconstruction in specimen space.
     pipeline : RegistrationPipeline
         The registration pipeline, already holding the loaded transforms.
-    images : tuple
-        ``(ccf, ants_exaspim, resampled_img, brain_np, resampled_np)``.
+    images : ReferenceImages
+        Templates and the geometry-only stand-ins for the reference volumes.
     destination : Path
         Where to write the transformed reconstruction.
     """
-    ccf, ants_exaspim, resampled_img, brain_np, resampled_np = images
     morph = read_swc(swc_path, add_offset=True)
     coords = np.array([[c["x"], c["y"], c["z"]] for c in morph.compartment_list])
     # cell_filename=None skips ImageVisualizer overlay rendering, which is the only
     # consumer of voxel data in this stage.
-    prepped = pipeline.preprocess_coords(coords, brain_np, resampled_np, None)
+    prepped = pipeline.preprocess_coords(coords, images.brain, images.resampled, None)
     idx_pts, _ = pipeline.apply_transforms_to_points(
-        prepped, resampled_img, ants_exaspim, ccf, None
+        prepped, images.resampled_image, images.exaspim_template, images.ccf, None
     )
     transformed = []
     for index, node in enumerate(morph.compartment_list):
@@ -99,6 +104,148 @@ def transform_one(
         transformed.append(compartment)
     destination.parent.mkdir(parents=True, exist_ok=True)
     Morphology(transformed).save(str(destination))
+
+
+def locate_bundle(spec: str) -> str:
+    """Return a local directory holding the registration bundle.
+
+    Parameters
+    ----------
+    spec : str
+        A mounted directory, an S3 URI, a dataset name, or a subject id.
+
+    Returns
+    -------
+    str
+        Path to the bundle, staged from S3 when it was not already local.
+    """
+    if spec and Path(spec).is_dir():
+        return spec
+    return stage_registration_bundle(spec)
+
+
+def locate_dataset(spec: str, bundle: str) -> tuple[str, str] | None:
+    """Identify the processed dataset the registration record belongs to.
+
+    Parameters
+    ----------
+    spec : str
+        Whatever was passed as ``--processed-dataset``.
+    bundle : str
+        The local bundle directory, which may carry the name in its path.
+
+    Returns
+    -------
+    tuple[str, str] | None
+        Bucket and dataset name, or ``None`` when neither can be determined.
+    """
+    bucket = urlparse(spec).netloc or BUCKET_DEFAULT
+    # A mounted path or URI carries the dataset name; a bare subject id needs a lookup.
+    dataset = dataset_name(spec, bundle)
+    if dataset:
+        return bucket, dataset
+    try:
+        return resolve_dataset(spec)
+    except (ValueError, FileNotFoundError) as error:
+        logger.error("Could not determine the processed dataset from %r: %s", spec, error)
+        return None
+
+
+def load_reference_images(resolved: ResolvedInputs, bucket: str, dataset: str) -> ReferenceImages:
+    """Assemble the images the transform reads, without loading reference volumes.
+
+    ``RegistrationPipeline.load_images`` would read two NIfTI volumes of 1.4-1.8 GB
+    whose voxels nothing consumes, and which many datasets never published. Only their
+    shape and geometry are used, so both are reconstructed from the registration record.
+
+    Parameters
+    ----------
+    resolved : ResolvedInputs
+        Resolved input paths.
+    bucket : str
+        Bucket holding the processed dataset.
+    dataset : str
+        Processed dataset name.
+
+    Returns
+    -------
+    ReferenceImages
+        Templates plus geometry-only stand-ins.
+    """
+    disable_overlay_normalization()
+    loaded, resampled = resolve_geometry(s3_client(), bucket, dataset, resolved.dataset_id)
+    return build_reference_images(
+        resolved.ccf_path, resolved.exaspim_template_path, loaded, resampled
+    )
+
+
+def transform_all(
+    swc_dir: Path,
+    pipeline: RegistrationPipeline,
+    images: ReferenceImages,
+    destination: Path,
+    fail_fast: bool,
+) -> tuple[int, list[str]]:
+    """Transform every reconstruction found under a directory.
+
+    Parameters
+    ----------
+    swc_dir : Path
+        Directory of specimen-space reconstructions.
+    pipeline : RegistrationPipeline
+        The registration pipeline.
+    images : ReferenceImages
+        Templates and reference geometry.
+    destination : Path
+        Directory to write CCF-space reconstructions to.
+    fail_fast : bool
+        Abort on the first failure rather than skipping it.
+
+    Returns
+    -------
+    tuple[int, list[str]]
+        How many were found, and the stems that failed.
+    """
+    swc_paths = sorted(swc_dir.rglob("*.swc"))
+    logger.info("Transforming %d reconstruction(s)", len(swc_paths))
+    failures: list[str] = []
+    for swc_path in swc_paths:
+        try:
+            transform_one(swc_path, pipeline, images, destination / f"{swc_path.stem}.swc")
+        except Exception as error:  # noqa: BLE001 - one bad cell must not lose the run
+            if fail_fast:
+                raise
+            logger.warning("Failed to transform %s: %s", swc_path.name, error)
+            failures.append(swc_path.stem)
+    return len(swc_paths), failures
+
+
+def carry_acquisition(source: str, output_root: Path) -> bool:
+    """Republish ``acquisition.json`` for the resample stage.
+
+    The resample stage converts specimen-space reconstructions between voxel and
+    physical units using the acquisition's ``coordinate_transformations``, and this is
+    the only stage that has the file.
+
+    Parameters
+    ----------
+    source : str
+        Path to the acquisition file.
+    output_root : Path
+        This stage's output directory.
+
+    Returns
+    -------
+    bool
+        Whether the file was carried forward.
+    """
+    path = Path(source)
+    if not path.is_file():
+        logger.warning("No acquisition file at %s; downstream scaling will be derived", path)
+        return False
+    output_root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, output_root / "acquisition.json")
+    return True
 
 
 def run() -> int:
@@ -113,23 +260,28 @@ def run() -> int:
     args = parse_args()
     started = datetime.now(timezone.utc)
 
-    transform_dir = args.processed_dataset
-    if transform_dir and not Path(transform_dir).is_dir():
-        from exaspim_swc_transform.s3_stage import stage_registration_bundle
+    swc_dir = Path(args.swc_dir)
+    if not args.swc_dir or not swc_dir.is_dir():
+        logger.error("--swc-dir must name a directory of reconstructions; got %r", args.swc_dir)
+        return 1
 
-        transform_dir = stage_registration_bundle(args.processed_dataset)
+    bundle = locate_bundle(args.processed_dataset)
+    located = locate_dataset(args.processed_dataset, bundle)
+    if located is None:
+        return 1
+    bucket, dataset = located
 
     # Nextflow hands the next stage only this stage's results, so the upstream outputs
     # have to be republished or they leave the chain.
     carried = carry_forward(DATA_DIR, RESULTS_DIR, UPSTREAM_STAGES)
     logger.info("Carried forward: %s", ", ".join(carried) or "nothing")
 
-    resolved = resolve_inputs(Path(transform_dir), args.df_asset, "")
+    resolved = resolve_inputs(Path(bundle), args.df_asset)
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
     # RegistrationPipeline requires an output_dir but writes there only for the overlays,
-    # which are disabled below.
+    # which load_reference_images disables.
     scratch = Path("/scratch") if Path("/scratch").is_dir() else Path("/tmp")
     debug_dir = scratch / "exaspim_swc_transform"
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -148,68 +300,12 @@ def run() -> int:
         level=2,
         manual_transform_path=resolved.manual_transform_path,
     )
+    images = load_reference_images(resolved, bucket, dataset)
 
-    # load_images() would read two reference volumes of 1.4-1.8 GB each. Only their shape
-    # and geometry are ever read, and 20 of 60 processed assets never published them, so
-    # both are reconstructed from the registration's own record instead.
-    disable_overlay_normalization()
-    # The bundle may be an S3 URI, a dataset name, a sample id, or a Code Ocean mount.
-    # All but the sample id carry the dataset name; that one needs an S3 lookup, which
-    # cannot parse the other forms.
-    bucket = urlparse(args.processed_dataset).netloc or BUCKET
-    dataset = dataset_name(args.processed_dataset, str(transform_dir))
-    if dataset is None:
-        try:
-            bucket, dataset = resolve_dataset(args.processed_dataset)
-        except (ValueError, FileNotFoundError) as error:
-            logger.error(
-                "Could not determine the processed dataset from %r: %s",
-                args.processed_dataset,
-                error,
-            )
-            return 1
-    loaded_geom, resampled_geom = resolve_geometry(
-        s3_client(), bucket, dataset, resolved.dataset_id
-    )
-    reference = build_reference_images(
-        resolved.ccf_path, resolved.exaspim_template_path, loaded_geom, resampled_geom
-    )
-    images = (
-        reference.ccf,
-        reference.exaspim_template,
-        reference.resampled_image,
-        reference.brain,
-        reference.resampled,
-    )
-
-    swc_paths = sorted(Path(args.swc_dir).rglob("*.swc"))
-    logger.info("Transforming %d reconstruction(s)", len(swc_paths))
-    failures: list[str] = []
-    for swc_path in swc_paths:
-        try:
-            transform_one(swc_path, pipeline, images, swc_out_dir / f"{swc_path.stem}.swc")
-        except Exception as error:  # noqa: BLE001 - one bad cell must not lose the run
-            if args.fail_fast:
-                raise
-            logger.warning("Failed to transform %s: %s", swc_path.name, error)
-            failures.append(swc_path.stem)
-
+    found, failures = transform_all(swc_dir, pipeline, images, swc_out_dir, args.fail_fast)
     shutil.rmtree(debug_dir, ignore_errors=True)
-    transformed = len(swc_paths) - len(failures)
-
-    # Carry the acquisition forward. The resample stage needs its
-    # coordinate_transformations to convert specimen-space reconstructions between voxel
-    # and physical units, and this is the only stage that has the file.
-    carried_acquisition = None
-    acquisition_source = Path(resolved.acquisition_file)
-    if acquisition_source.is_file():
-        carried_acquisition = output_root / "acquisition.json"
-        carried_acquisition.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(acquisition_source, carried_acquisition)
-        logger.info("Carried acquisition forward to %s", carried_acquisition)
-    else:
-        logger.warning("No acquisition file at %s; downstream scaling will be derived",
-                       acquisition_source)
+    transformed = found - len(failures)
+    acquisition_carried = carry_acquisition(resolved.acquisition_file, output_root)
 
     write_stage_process(
         build_stage_process(
@@ -227,22 +323,20 @@ def run() -> int:
             },
             output_parameters={
                 "aligned_swc_dir": str(swc_out_dir),
-                "input_swc_count": len(swc_paths),
+                "input_swc_count": found,
                 "transformed_swc_count": transformed,
                 "failed": failures,
                 "dataset_id": resolved.dataset_id,
-                "acquisition_carried_forward": bool(carried_acquisition),
+                "acquisition_carried_forward": acquisition_carried,
                 "stages_carried_forward": carried,
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
-            notes=(
-                f"Transformed {transformed} of {len(swc_paths)} reconstructions into CCF space."
-            ),
+            notes=f"Transformed {transformed} of {found} reconstructions into CCF space.",
         ),
         output_root,
     )
 
-    logger.info("Transformed %d of %d", transformed, len(swc_paths))
+    logger.info("Transformed %d of %d", transformed, found)
     return 1 if failures else 0
 
 
