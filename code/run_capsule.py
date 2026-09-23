@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import numpy as np
 from allensdk.core.swc import Compartment, Morphology
 from aind_exaspim_register_cells import RegistrationPipeline
+from exaspim_swc_processing.resources import log_peak_memory
 from exaspim_swc_processing.stage import (
     UPSTREAM_STAGES,
     build_stage_process,
@@ -243,6 +244,7 @@ def run() -> int:
     )
 
     logger.info("Transformed %d of %d", transformed, len(swc_paths))
+    log_peak_memory()
     return 1 if failures else 0
 
 
