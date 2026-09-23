@@ -121,6 +121,31 @@ def scratch_dir() -> Path:
     return path
 
 
+def reconstruction_root(swc_dir: Path) -> Path:
+    """Return the mounted asset directory that holds the upstream stage outputs.
+
+    A reconstruction asset connected to the pipeline mounts at ``/data/<asset>/``, so its
+    ``refinement/`` and ``dispatch/`` sit one level below ``/data`` rather than directly
+    in it. Walking up from the reconstructions finds that directory without assuming the
+    asset's name.
+
+    Parameters
+    ----------
+    swc_dir : Path
+        Directory of specimen-space reconstructions, e.g.
+        ``/data/<asset>/refinement/final-voxel``.
+
+    Returns
+    -------
+    Path
+        The nearest ancestor holding a stage directory, or ``DATA_DIR`` if none does.
+    """
+    for candidate in (swc_dir, *swc_dir.parents):
+        if any((candidate / stage).is_dir() for stage in UPSTREAM_STAGES):
+            return candidate
+    return DATA_DIR
+
+
 def locate_bundle(spec: str) -> str:
     """Return a local directory holding the registration bundle.
 
@@ -288,7 +313,7 @@ def run() -> int:
 
     # Nextflow hands the next stage only this stage's results, so the upstream outputs
     # have to be republished or they leave the chain.
-    carried = carry_forward(DATA_DIR, RESULTS_DIR, UPSTREAM_STAGES)
+    carried = carry_forward(reconstruction_root(swc_dir), RESULTS_DIR, UPSTREAM_STAGES)
     logger.info("Carried forward: %s", ", ".join(carried) or "nothing")
 
     resolved = resolve_inputs(Path(bundle), args.df_asset)
