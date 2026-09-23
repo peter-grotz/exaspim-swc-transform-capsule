@@ -163,15 +163,25 @@ def _infer_dataset_id(bundle_root: Path, transform_dir: Path) -> str:
     )
 
 
+DISPLACEMENT_FIELD_SUFFIXES = (".nrrd", ".nii.gz")
+"""Extensions a manual CCF refinement displacement field may be published with."""
+
+
 def _resolve_manual_df(manual_df_path: str, dataset_id: str) -> list[str]:
     """Locate the manual CCF refinement displacement field, if one was given.
+
+    No filename convention is assumed. A directory -- typically a data asset mounted
+    straight onto the pipeline -- is searched for a single field by extension, and an
+    ambiguous directory is an error rather than a guess. Once fields are published under
+    a settled name, matching it explicitly would be cheaper than this scan.
 
     Parameters
     ----------
     manual_df_path : str
-        A file, a directory to search, or empty for none.
+        A file, a directory holding exactly one field, or empty for none.
     dataset_id : str
-        Subject id, used to name candidates inside a directory.
+        Subject id. Unused while no naming convention is assumed; kept because the
+        commented-out candidates below need it.
 
     Returns
     -------
@@ -181,9 +191,9 @@ def _resolve_manual_df(manual_df_path: str, dataset_id: str) -> list[str]:
     Raises
     ------
     MissingInput
-        If a path was given but no displacement field is there. Raised directly for a
-        path that is neither file nor directory, and by :func:`_resolve` otherwise.
+        If a path was given but no single displacement field can be identified there.
     """
+    del dataset_id  # only the commented-out name candidates below would use it
     given = manual_df_path.strip().strip("'\"")
     if not given:
         return []
@@ -191,14 +201,36 @@ def _resolve_manual_df(manual_df_path: str, dataset_id: str) -> list[str]:
     if path.is_file():
         return [str(path.resolve())]
     if not path.is_dir():
-        raise MissingInput(f"--manual-df-path is neither a file nor a directory: {given}")
-    candidates = [
-        path / f"{dataset_id}_displacement_field_vector_volume.nrrd",
-        path / f"{dataset_id}_displacement_field.nrrd",
-        path / "displacement_field_vector_volume.nrrd",
-        path / "displacement_field.nrrd",
-    ]
-    return [_resolve("", candidates, "manual displacement field")]
+        raise MissingInput(f"--df-asset is neither a file nor a directory: {given}")
+
+    # Guessing filenames was wrong: no displacement field has been published yet, so
+    # every candidate below is speculation. Restore this once a convention exists.
+    #
+    # candidates = [
+    #     path / f"{dataset_id}_displacement_field_vector_volume.nrrd",
+    #     path / f"{dataset_id}_displacement_field.nrrd",
+    #     path / "displacement_field_vector_volume.nrrd",
+    #     path / "displacement_field.nrrd",
+    # ]
+    # return [_resolve("", candidates, "manual displacement field")]
+
+    found = sorted(
+        candidate
+        for candidate in path.rglob("*")
+        if candidate.is_file() and candidate.name.endswith(DISPLACEMENT_FIELD_SUFFIXES)
+    )
+    if len(found) == 1:
+        return [str(found[0].resolve())]
+    if not found:
+        present = "\n".join(f"  - {c.name}" for c in sorted(path.iterdir())[:20]) or "  (empty)"
+        raise MissingInput(
+            f"No displacement field ({', '.join(DISPLACEMENT_FIELD_SUFFIXES)}) under "
+            f"{path}. Contents:\n{present}"
+        )
+    listing = "\n".join(f"  - {c}" for c in found)
+    raise MissingInput(
+        f"{len(found)} displacement fields under {path}; point --df-asset at one.\n{listing}"
+    )
 
 
 def resolve_inputs(
