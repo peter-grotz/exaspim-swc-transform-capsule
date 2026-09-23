@@ -27,6 +27,7 @@ from exaspim_swc_transform.s3_stage import (
 )
 from exaspim_swc_transform.transform_resolution import ResolvedInputs, resolve_inputs
 
+from exaspim_swc_processing.acquisition import AcquisitionNotFoundError, resolve_acquisition
 from exaspim_swc_processing.registration import dataset_name
 from exaspim_swc_processing.stage import (
     UPSTREAM_STAGES,
@@ -104,6 +105,20 @@ def transform_one(
         transformed.append(compartment)
     destination.parent.mkdir(parents=True, exist_ok=True)
     Morphology(transformed).save(str(destination))
+
+
+def scratch_dir() -> Path:
+    """Return this stage's scratch directory, created if needed.
+
+    Returns
+    -------
+    Path
+        ``/scratch`` under Code Ocean, ``/tmp`` elsewhere.
+    """
+    root = Path("/scratch") if Path("/scratch").is_dir() else Path("/tmp")
+    path = root / "exaspim_swc_transform"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def locate_bundle(spec: str) -> str:
@@ -280,16 +295,31 @@ def run() -> int:
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
+    # The registry holds what the indexer published; a staged bundle may carry a stale
+    # copy or none. check_orientation reads the axes from this, so a wrong one
+    # mis-registers every cell without failing.
+    try:
+        acquisition_path, acquisition_source = resolve_acquisition(
+            dataset,
+            scratch_dir() / "acquisition.json",
+            local_fallback=resolved.acquisition_file,
+        )
+    except AcquisitionNotFoundError as error:
+        logger.error("%s", error)
+        return 1
+    logger.info(
+        "Acquisition from %s", acquisition_source.value if acquisition_source else "staged bundle"
+    )
+
     # RegistrationPipeline requires an output_dir but writes there only for the overlays,
     # which load_reference_images disables.
-    scratch = Path("/scratch") if Path("/scratch").is_dir() else Path("/tmp")
-    debug_dir = scratch / "exaspim_swc_transform"
+    debug_dir = scratch_dir() / "overlays"
     debug_dir.mkdir(parents=True, exist_ok=True)
 
     pipeline = RegistrationPipeline(
         dataset_id=resolved.dataset_id,
         output_dir=str(debug_dir),
-        acquisition_file=resolved.acquisition_file,
+        acquisition_file=str(acquisition_path),
         brain_path=resolved.brain_path,
         resampled_brain_path=resolved.resampled_brain_path,
         brain_to_exaspim_transform_path=resolved.brain_to_exaspim_transform_path,
@@ -305,7 +335,7 @@ def run() -> int:
     found, failures = transform_all(swc_dir, pipeline, images, swc_out_dir, args.fail_fast)
     shutil.rmtree(debug_dir, ignore_errors=True)
     transformed = found - len(failures)
-    acquisition_carried = carry_acquisition(resolved.acquisition_file, output_root)
+    acquisition_carried = carry_acquisition(str(acquisition_path), output_root)
 
     write_stage_process(
         build_stage_process(
@@ -328,6 +358,7 @@ def run() -> int:
                 "failed": failures,
                 "dataset_id": resolved.dataset_id,
                 "acquisition_carried_forward": acquisition_carried,
+                "acquisition_source": acquisition_source.value if acquisition_source else "staged",
                 "stages_carried_forward": carried,
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],

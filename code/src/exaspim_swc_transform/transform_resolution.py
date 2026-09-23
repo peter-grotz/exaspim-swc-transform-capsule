@@ -279,8 +279,8 @@ def resolve_inputs(
 
     return ResolvedInputs(
         dataset_id=dataset_id,
-        # Older datasets file the acquisition under registration_metadata/; newer ones
-        # publish it only at the dataset root.
+        # Optional: the acquisition is resolved from DocDB first, and a staged copy is
+        # only the last resort. See exaspim_swc_processing.acquisition.
         acquisition_file=_resolve(
             "",
             [
@@ -290,6 +290,7 @@ def resolve_inputs(
                 root.parent / "acquisition.json",
             ],
             "acquisition file",
+            required=False,
         ),
         brain_path=_resolve(
             "",
