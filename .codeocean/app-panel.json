@@ -1,33 +1,33 @@
 {
-	"version": 1,
-	"parameters": [
-		{
-			"id": "swcdir00000000001",
-			"name": "swc_dir",
-			"description": "Directory of specimen-space SWCs to transform",
-			"type": "text",
-			"value_type": "string"
-		},
-		{
-			"id": "processeddataset1",
-			"name": "processed_dataset",
-			"description": "S3 URI or sample id under aind-open-data; ccf_alignment/ is staged automatically",
-			"type": "text",
-			"value_type": "string"
-		},
-		{
-			"id": "dfasset0000000001",
-			"name": "df_asset",
-			"description": "Mount dir of the displacement-field data asset, which also holds the exaSPIM->CCF transforms",
-			"type": "text",
-			"value_type": "string"
-		},
-		{
-			"id": "experimenters00001",
-			"name": "experimenters",
-			"description": "Comma-separated names recorded on this stage",
-			"type": "text",
-			"value_type": "string"
-		}
-	]
+  "version": 1,
+  "parameters": [
+    {
+      "id": "swcdir00000000001",
+      "name": "swc_dir",
+      "description": "Physical-space reconstructions, i.e. <asset>/refinement/final-world. Not final-voxel: voxel coordinates are rejected.",
+      "type": "text",
+      "value_type": "string"
+    },
+    {
+      "id": "processeddataset1",
+      "name": "processed_dataset",
+      "description": "S3 URI or sample id under aind-open-data; ccf_alignment/ is staged automatically",
+      "type": "text",
+      "value_type": "string"
+    },
+    {
+      "id": "dfasset0000000001",
+      "name": "df_asset",
+      "description": "Mount dir of the displacement-field data asset, which also holds the exaSPIM->CCF transforms",
+      "type": "text",
+      "value_type": "string"
+    },
+    {
+      "id": "experimenters00001",
+      "name": "experimenters",
+      "description": "Comma-separated names recorded on this stage",
+      "type": "text",
+      "value_type": "string"
+    }
+  ]
 }

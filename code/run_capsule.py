@@ -41,6 +41,12 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", "/results"))
 OUTPUT_STAGE = "alignment"
 STEP_NAME = "exaspim_swc_transform"
+VOXEL_SPACE_DIR = "final-voxel"
+"""Refinement output in voxel units; not a valid transform input."""
+
+WORLD_SPACE_DIR = "final-world"
+"""Refinement output in physical units, which the registration expects."""
+
 CCF_RESOLUTION_UM = 10.0
 """Edge length of a CCF template voxel. Transformed points are indices; this scales to um."""
 
@@ -303,6 +309,18 @@ def run() -> int:
     swc_dir = Path(args.swc_dir)
     if not args.swc_dir or not swc_dir.is_dir():
         logger.error("--swc-dir must name a directory of reconstructions; got %r", args.swc_dir)
+        return 1
+    # The registration converts physical coordinates to voxels itself, dividing x and y by
+    # the 0.748 anisotropy. Voxel-space input is therefore converted twice and lands scaled
+    # 1.337x in-plane and displaced -- plausibly shaped, so it would not fail on its own.
+    if swc_dir.name == VOXEL_SPACE_DIR:
+        logger.error(
+            "--swc-dir points at %s/, which is in voxel units; transform needs the "
+            "physical-space reconstructions in %s/: %s",
+            VOXEL_SPACE_DIR,
+            WORLD_SPACE_DIR,
+            swc_dir.parent / WORLD_SPACE_DIR,
+        )
         return 1
 
     bundle = locate_bundle(args.processed_dataset)
