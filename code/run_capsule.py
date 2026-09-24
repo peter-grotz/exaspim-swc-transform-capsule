@@ -1,6 +1,7 @@
 """Transform exaSPIM SWC reconstructions from specimen space into CCF space."""
 
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -28,6 +29,7 @@ from exaspim_swc_transform.transform_resolution import ResolvedInputs, resolve_i
 
 from exaspim_swc_processing.acquisition import AcquisitionNotFoundError, resolve_acquisition
 from exaspim_swc_processing.datasets import (
+    DatasetMismatchError,
     DatasetNotFoundError,
     ProcessedDataset,
     registry_sources,
@@ -179,14 +181,40 @@ def reconstruction_root(swc_dir: Path) -> Path:
     return DATA_DIR
 
 
-def locate_dataset(spec: str) -> ProcessedDataset | None:
+def recorded_image_path(asset_root: Path) -> str:
+    """Return the image the reconstructions were traced on, as their asset records it.
+
+    Parameters
+    ----------
+    asset_root : Path
+        The mounted reconstruction asset, holding ``refinement/``.
+
+    Returns
+    -------
+    str
+        ``code.parameters.image_path`` from ``refinement/data_process.json``, e.g.
+        ``s3://aind-open-data/<dataset>/fusion/fused.zarr``, or ``""`` if absent.
+    """
+    record = asset_root / "refinement" / "data_process.json"
+    try:
+        payload = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.info("No readable %s; the traced image is unknown", record)
+        return ""
+    return str(((payload.get("code") or {}).get("parameters") or {}).get("image_path") or "")
+
+
+def locate_dataset(spec: str, image_path: str) -> ProcessedDataset | None:
     """Resolve the processed dataset through the registry, falling back to S3.
 
     Parameters
     ----------
     spec : str
         Whatever was passed as ``--processed-dataset``: a dataset name, an ``s3://`` URI,
-        a mounted path, or a subject id.
+        a mounted path, a subject id, or empty.
+    image_path : str
+        The image the reconstructions were traced on; used when DocDB does not resolve
+        ``spec``, and to check the result against.
 
     Returns
     -------
@@ -194,8 +222,10 @@ def locate_dataset(spec: str) -> ProcessedDataset | None:
         Its name, bucket and subject, or ``None`` when nothing resolves it.
     """
     try:
-        dataset = resolve_processed_dataset(spec, registry_sources(), s3_client(), BUCKET_DEFAULT)
-    except DatasetNotFoundError as error:
+        dataset = resolve_processed_dataset(
+            spec, registry_sources(), s3_client(), BUCKET_DEFAULT, image_path
+        )
+    except (DatasetNotFoundError, DatasetMismatchError) as error:
         logger.error("%s", error)
         return None
     logger.info(
@@ -353,7 +383,11 @@ def run() -> int:
         )
         return 1
 
-    dataset = locate_dataset(args.processed_dataset)
+    # DocDB is asked first; the reconstructions' own record of the image they were traced
+    # on is the fallback, and the check that the two agree.
+    dataset = locate_dataset(
+        args.processed_dataset, recorded_image_path(reconstruction_root(swc_dir))
+    )
     if dataset is None:
         return 1
     bundle = locate_bundle(args.processed_dataset, dataset)

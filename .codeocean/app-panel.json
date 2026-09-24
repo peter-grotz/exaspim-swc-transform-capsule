@@ -11,7 +11,7 @@
     {
       "id": "processeddataset1",
       "name": "processed_dataset",
-      "description": "Processed imaging dataset: its name, s3:// URI, or subject id. Resolved through DocDB first, then S3 by exact name.",
+      "description": "Optional. Processed imaging dataset: name, s3:// URI, or subject id. Resolved through DocDB first; if that fails, the image recorded in the reconstructions' refinement/data_process.json is used.",
       "type": "text",
       "value_type": "string"
     },
