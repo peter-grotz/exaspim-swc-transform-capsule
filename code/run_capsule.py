@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -25,9 +26,11 @@ from exaspim_swc_transform.s3_stage import (
     s3_client,
     stage_registration_bundle,
 )
+from exaspim_swc_transform.template_selection import LegacySampleError, select_template_to_ccf
 from exaspim_swc_transform.transform_resolution import ResolvedInputs, resolve_inputs
 
 from exaspim_swc_processing.acquisition import AcquisitionNotFoundError, resolve_acquisition
+from exaspim_swc_processing.naming import ReconstructionNameError, parse_stem
 from exaspim_swc_processing.registration import dataset_name
 from exaspim_swc_processing.stage import (
     UPSTREAM_STAGES,
@@ -111,6 +114,29 @@ def transform_one(
         transformed.append(compartment)
     destination.parent.mkdir(parents=True, exist_ok=True)
     Morphology(transformed).save(str(destination))
+
+
+def cell_subjects(swc_dir: Path) -> set[str]:
+    """Return the subject ids named by the reconstructions to be transformed.
+
+    Parameters
+    ----------
+    swc_dir : Path
+        Directory of reconstructions, named ``<neuron>-<subject>-<annotator>.swc``.
+
+    Returns
+    -------
+    set[str]
+        Distinct subject ids. An unparseable name contributes ``"?<stem>"`` so it is
+        reported rather than silently ignored.
+    """
+    subjects: set[str] = set()
+    for path in swc_dir.rglob("*.swc"):
+        try:
+            subjects.add(parse_stem(path.stem).subject_id)
+        except ReconstructionNameError:
+            subjects.add(f"?{path.stem}")
+    return subjects
 
 
 def scratch_dir() -> Path:
@@ -329,12 +355,35 @@ def run() -> int:
         return 1
     bucket, dataset = located
 
+    # Every cell must belong to the sample whose registration is applied to it; a cell from
+    # another subject would be transformed with the wrong warp and still look plausible.
+    sample = re.search(r"exaSPIM_(\d{6})_", dataset)
+    sample_id = sample.group(1) if sample else ""
+    subjects = cell_subjects(swc_dir)
+    if subjects != {sample_id}:
+        logger.error(
+            "Reconstructions in %s name subject(s) %s, but the registration is for %s",
+            swc_dir,
+            ", ".join(sorted(subjects)) or "none",
+            sample_id or dataset,
+        )
+        return 1
+
+    # Pre-v1.5 samples keep the template-to-CCF version their CCF coordinates were
+    # originally produced with; legacy samples, whose version is unknown, are refused.
+    try:
+        template = select_template_to_ccf(sample_id)
+    except LegacySampleError as error:
+        logger.error("%s", error)
+        return 1
+    logger.info("Template-to-CCF: %s (%s)", template.asset, template.basis)
+
     # Nextflow hands the next stage only this stage's results, so the upstream outputs
     # have to be republished or they leave the chain.
     carried = carry_forward(reconstruction_root(swc_dir), RESULTS_DIR, UPSTREAM_STAGES)
     logger.info("Carried forward: %s", ", ".join(carried) or "nothing")
 
-    resolved = resolve_inputs(Path(bundle), args.df_asset)
+    resolved = resolve_inputs(Path(bundle), args.df_asset, template_to_ccf_asset=template.asset)
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
@@ -403,6 +452,8 @@ def run() -> int:
                 "acquisition_carried_forward": acquisition_carried,
                 "acquisition_source": acquisition_source.value if acquisition_source else "staged",
                 "stages_carried_forward": carried,
+                "template_to_ccf": template.asset,
+                "template_to_ccf_basis": template.basis,
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             notes=f"Transformed {transformed} of {found} reconstructions into CCF space.",

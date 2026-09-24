@@ -16,10 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TEMPLATE_TO_CCF_ASSET = "reg_exaspim_template_to_ccf_25um_v1.5"
-"""Mounted template-to-CCF registration the pipeline standardises on."""
-
-DEFAULT_EXASPIM_TO_CCF_AFFINE = f"/data/{TEMPLATE_TO_CCF_ASSET}/0GenericAffine.mat"
-DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP = f"/data/{TEMPLATE_TO_CCF_ASSET}/1InverseWarp.nii.gz"
+"""Default template-to-CCF asset; see :mod:`exaspim_swc_transform.template_selection`."""
 DEFAULT_CCF_TEMPLATE = "/data/allen_mouse_ccf/average_template/average_template_10.nii.gz"
 DEFAULT_EXASPIM_TEMPLATE = (
     "/data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz"
@@ -240,8 +237,7 @@ def resolve_inputs(
     *,
     ccf_template_path: str = DEFAULT_CCF_TEMPLATE,
     exaspim_template_path: str = DEFAULT_EXASPIM_TEMPLATE,
-    exaspim_to_ccf_affine_path: str = DEFAULT_EXASPIM_TO_CCF_AFFINE,
-    exaspim_to_ccf_inverse_warp_path: str = DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP,
+    template_to_ccf_asset: str = TEMPLATE_TO_CCF_ASSET,
 ) -> ResolvedInputs:
     """Locate every input the transform needs.
 
@@ -257,10 +253,9 @@ def resolve_inputs(
         CCF average template.
     exaspim_template_path : str, optional
         exaSPIM template.
-    exaspim_to_ccf_affine_path : str, optional
-        Template-to-CCF affine.
-    exaspim_to_ccf_inverse_warp_path : str, optional
-        Template-to-CCF inverse warp.
+    template_to_ccf_asset : str, optional
+        Mount name of the template-to-CCF data asset; it must be connected to this
+        process. Chosen per sample by :mod:`exaspim_swc_transform.template_selection`.
 
     Returns
     -------
@@ -317,8 +312,16 @@ def resolve_inputs(
             ),
         ],
         exaspim_to_ccf_transform_path=[
-            _resolve(exaspim_to_ccf_affine_path, [], "exaSPIM->CCF affine"),
-            _resolve(exaspim_to_ccf_inverse_warp_path, [], "exaSPIM->CCF inverse warp"),
+            _resolve(
+                f"/data/{template_to_ccf_asset}/0GenericAffine.mat",
+                [],
+                f"exaSPIM->CCF affine from {template_to_ccf_asset}",
+            ),
+            _resolve(
+                f"/data/{template_to_ccf_asset}/1InverseWarp.nii.gz",
+                [],
+                f"exaSPIM->CCF inverse warp from {template_to_ccf_asset}",
+            ),
         ],
         manual_transform_path=_resolve_manual_df(manual_df_path, dataset_id),
         ccf_path=_resolve(ccf_template_path, [], "CCF template"),
