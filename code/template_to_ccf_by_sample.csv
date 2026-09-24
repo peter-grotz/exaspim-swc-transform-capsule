@@ -1,0 +1,40 @@
+sample_id,template_to_ccf,basis
+609281,legacy,no version recorded (legacy transform); needs the legacy pipeline
+613814,legacy,no version recorded (legacy transform); needs the legacy pipeline
+648434,reg_exaspim_template_to_ccf_withGradMap_10um_v1.0,"recorded by exaspim_swc_transform, 2026-03-10"
+651324,legacy,no version recorded (legacy transform); needs the legacy pipeline
+651895,legacy,no version recorded (legacy transform); needs the legacy pipeline
+653158,legacy,no version recorded (legacy transform); needs the legacy pipeline
+653159,legacy,no version recorded (legacy transform); needs the legacy pipeline
+653980,reg_exaspim_template_to_ccf_25um_v1.1,"recorded by exaspim_swc_transform, 2026-03-12"
+658735,legacy,no version recorded (legacy transform); needs the legacy pipeline
+665081,legacy,no version recorded (legacy transform); needs the legacy pipeline
+667996,legacy,no version recorded (legacy transform); needs the legacy pipeline
+674185,legacy,no version recorded (legacy transform); needs the legacy pipeline
+674191,legacy,no version recorded (legacy transform); needs the legacy pipeline
+675375,legacy,no version recorded (legacy transform); needs the legacy pipeline
+685221,legacy,no version recorded (legacy transform); needs the legacy pipeline
+685222,legacy,no version recorded (legacy transform); needs the legacy pipeline
+686951,reg_exaspim_template_to_ccf_withGradMap_10um_v1.0,"recorded by exaspim_swc_transform, 2026-03-16"
+686955,legacy,no version recorded (legacy transform); needs the legacy pipeline
+703070,reg_exaspim_template_to_ccf_25um_v1.3,"recorded by exaspim_swc_transform, 2026-03-10"
+706301,legacy,no version recorded (legacy transform); needs the legacy pipeline
+708365,reg_exaspim_template_to_ccf_25um_v1.2,"recorded by exaspim_swc_transform, 2026-03-12"
+708369,legacy,no version recorded (legacy transform); needs the legacy pipeline
+709222,reg_exaspim_template_to_ccf_25um_v1.3,"recorded by exaspim_swc_transform, 2026-03-10"
+709839,legacy,no version recorded (legacy transform); needs the legacy pipeline
+715345,legacy,no version recorded (legacy transform); needs the legacy pipeline
+715346,legacy,no version recorded (legacy transform); needs the legacy pipeline
+715347,reg_exaspim_template_to_ccf_withGradMap_10um_v1.0,"recorded by exaspim_swc_transform, 2026-03-13"
+717445,reg_exaspim_template_to_ccf_25um_v1.1,"recorded by exaspim_swc_transform, 2026-03-12"
+719654,reg_exaspim_template_to_ccf_25um_v1.3,"recorded by exaspim_swc_transform, 2026-06-15"
+721332,reg_exaspim_template_to_ccf_25um_v1.4,"recorded by exaspim_swc_transform, 2026-03-24"
+721828,legacy,no version recorded (legacy transform); needs the legacy pipeline
+730902,reg_exaspim_template_to_ccf_25um_v1.3,"recorded by exaspim_swc_transform, 2026-03-12"
+737563,legacy,no version recorded (legacy transform); needs the legacy pipeline
+747807,legacy,no version recorded (legacy transform); needs the legacy pipeline
+751473,reg_exaspim_template_to_ccf_withGradMap_10um_v1.0,"recorded by exaspim_swc_transform, 2026-03-10"
+754610,reg_exaspim_template_to_ccf_25um_v1.3,"recorded by exaspim_swc_transform, 2026-03-09"
+754611,reg_exaspim_template_to_ccf_25um_v1.2,"recorded by exaspim_swc_transform, 2026-03-12"
+754612,reg_exaspim_template_to_ccf_25um_v1.2,"recorded by exaspim_swc_transform, 2026-03-12"
+754613,reg_exaspim_template_to_ccf_25um_v1.2,"recorded by exaspim_swc_transform, 2026-03-13"

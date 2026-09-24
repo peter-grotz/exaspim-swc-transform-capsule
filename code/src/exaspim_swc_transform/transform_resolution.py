@@ -11,22 +11,15 @@ voxels; :mod:`exaspim_swc_transform.reference` reconstructs their geometry inste
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 TEMPLATE_TO_CCF_ASSET = "reg_exaspim_template_to_ccf_25um_v1.5"
-"""Mounted template-to-CCF registration the pipeline standardises on."""
-
-DEFAULT_EXASPIM_TO_CCF_AFFINE = f"/data/{TEMPLATE_TO_CCF_ASSET}/0GenericAffine.mat"
-DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP = f"/data/{TEMPLATE_TO_CCF_ASSET}/1InverseWarp.nii.gz"
+"""Default template-to-CCF asset; see :mod:`exaspim_swc_transform.template_selection`."""
 DEFAULT_CCF_TEMPLATE = "/data/allen_mouse_ccf/average_template/average_template_10.nii.gz"
 DEFAULT_EXASPIM_TEMPLATE = (
     "/data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz"
 )
-
-SUBJECT_ID = re.compile(r"\d{6}")
-"""Subject ids are six digits; they appear in directory and file names."""
 
 
 class MissingInput(FileNotFoundError):
@@ -125,123 +118,14 @@ def _bundle_root(transform_dir: Path) -> Path:
     return nested if nested.is_dir() else transform_dir
 
 
-def _infer_dataset_id(bundle_root: Path, transform_dir: Path) -> str:
-    """Recover the subject id from the directory and file names around the bundle.
-
-    Parameters
-    ----------
-    bundle_root : Path
-        Directory holding the registration outputs.
-    transform_dir : Path
-        Directory the bundle was staged or mounted at.
-
-    Returns
-    -------
-    str
-        The six-digit subject id.
-
-    Raises
-    ------
-    ValueError
-        If no id appears in any directory or filename.
-    """
-    names = [
-        bundle_root.name,
-        bundle_root.parent.name,
-        transform_dir.name,
-        transform_dir.parent.name,
-    ]
-    for root in (bundle_root / "registration_metadata", bundle_root, transform_dir):
-        if root.is_dir():
-            names.extend(path.name for path in sorted(root.glob("*")))
-    for name in names:
-        match = SUBJECT_ID.search(name)
-        if match:
-            return match.group(0)
-    raise ValueError(
-        f"Could not infer the subject id from {transform_dir}; pass dataset_id explicitly"
-    )
-
-
-DISPLACEMENT_FIELD_SUFFIXES = (".nrrd", ".nii.gz")
-"""Extensions a manual CCF refinement displacement field may be published with."""
-
-
-def _resolve_manual_df(manual_df_path: str, dataset_id: str) -> list[str]:
-    """Locate the manual CCF refinement displacement field, if one was given.
-
-    No filename convention is assumed. A directory -- typically a data asset mounted
-    straight onto the pipeline -- is searched for a single field by extension, and an
-    ambiguous directory is an error rather than a guess. Once fields are published under
-    a settled name, matching it explicitly would be cheaper than this scan.
-
-    Parameters
-    ----------
-    manual_df_path : str
-        A file, a directory holding exactly one field, or empty for none.
-    dataset_id : str
-        Subject id. Unused while no naming convention is assumed; kept because the
-        commented-out candidates below need it.
-
-    Returns
-    -------
-    list[str]
-        One path, or empty when no field was requested.
-
-    Raises
-    ------
-    MissingInput
-        If a path was given but no single displacement field can be identified there.
-    """
-    del dataset_id  # only the commented-out name candidates below would use it
-    given = manual_df_path.strip().strip("'\"")
-    if not given:
-        return []
-    path = Path(given)
-    if path.is_file():
-        return [str(path.resolve())]
-    if not path.is_dir():
-        raise MissingInput(f"--df-asset is neither a file nor a directory: {given}")
-
-    # Guessing filenames was wrong: no displacement field has been published yet, so
-    # every candidate below is speculation. Restore this once a convention exists.
-    #
-    # candidates = [
-    #     path / f"{dataset_id}_displacement_field_vector_volume.nrrd",
-    #     path / f"{dataset_id}_displacement_field.nrrd",
-    #     path / "displacement_field_vector_volume.nrrd",
-    #     path / "displacement_field.nrrd",
-    # ]
-    # return [_resolve("", candidates, "manual displacement field")]
-
-    found = sorted(
-        candidate
-        for candidate in path.rglob("*")
-        if candidate.is_file() and candidate.name.endswith(DISPLACEMENT_FIELD_SUFFIXES)
-    )
-    if len(found) == 1:
-        return [str(found[0].resolve())]
-    if not found:
-        present = "\n".join(f"  - {c.name}" for c in sorted(path.iterdir())[:20]) or "  (empty)"
-        raise MissingInput(
-            f"No displacement field ({', '.join(DISPLACEMENT_FIELD_SUFFIXES)}) under "
-            f"{path}. Contents:\n{present}"
-        )
-    listing = "\n".join(f"  - {c}" for c in found)
-    raise MissingInput(
-        f"{len(found)} displacement fields under {path}; point --df-asset at one.\n{listing}"
-    )
-
-
 def resolve_inputs(
     transform_dir: Path,
-    manual_df_path: str = "",
-    dataset_id: str = "",
+    dataset_id: str,
     *,
     ccf_template_path: str = DEFAULT_CCF_TEMPLATE,
     exaspim_template_path: str = DEFAULT_EXASPIM_TEMPLATE,
-    exaspim_to_ccf_affine_path: str = DEFAULT_EXASPIM_TO_CCF_AFFINE,
-    exaspim_to_ccf_inverse_warp_path: str = DEFAULT_EXASPIM_TO_CCF_INVERSE_WARP,
+    template_to_ccf_asset: str = TEMPLATE_TO_CCF_ASSET,
+    displacement_field: str = "",
 ) -> ResolvedInputs:
     """Locate every input the transform needs.
 
@@ -249,18 +133,18 @@ def resolve_inputs(
     ----------
     transform_dir : Path
         Directory the registration bundle was staged or mounted at.
-    manual_df_path : str, optional
-        Manual CCF refinement displacement field, or a directory holding one.
-    dataset_id : str, optional
-        Subject id. Inferred from the bundle when omitted.
+    dataset_id : str
+        Subject id, from the registry record. It names the registration's files.
     ccf_template_path : str, optional
         CCF average template.
     exaspim_template_path : str, optional
         exaSPIM template.
-    exaspim_to_ccf_affine_path : str, optional
-        Template-to-CCF affine.
-    exaspim_to_ccf_inverse_warp_path : str, optional
-        Template-to-CCF inverse warp.
+    template_to_ccf_asset : str, optional
+        Mount name of the template-to-CCF data asset; it must be connected to this
+        process. Chosen per sample by :mod:`exaspim_swc_transform.template_selection`.
+    displacement_field : str, optional
+        Local path of the manual CCF refinement field, or an empty string for none. Located by
+        :mod:`exaspim_swc_transform.displacement`.
 
     Returns
     -------
@@ -274,7 +158,6 @@ def resolve_inputs(
         because this is the function callers hold.
     """  # noqa: DOC502 - propagated, and callers need it documented
     root = _bundle_root(transform_dir)
-    dataset_id = dataset_id or _infer_dataset_id(root, transform_dir)
     meta = root / "registration_metadata"
 
     return ResolvedInputs(
@@ -317,10 +200,18 @@ def resolve_inputs(
             ),
         ],
         exaspim_to_ccf_transform_path=[
-            _resolve(exaspim_to_ccf_affine_path, [], "exaSPIM->CCF affine"),
-            _resolve(exaspim_to_ccf_inverse_warp_path, [], "exaSPIM->CCF inverse warp"),
+            _resolve(
+                f"/data/{template_to_ccf_asset}/0GenericAffine.mat",
+                [],
+                f"exaSPIM->CCF affine from {template_to_ccf_asset}",
+            ),
+            _resolve(
+                f"/data/{template_to_ccf_asset}/1InverseWarp.nii.gz",
+                [],
+                f"exaSPIM->CCF inverse warp from {template_to_ccf_asset}",
+            ),
         ],
-        manual_transform_path=_resolve_manual_df(manual_df_path, dataset_id),
+        manual_transform_path=[displacement_field] if displacement_field else [],
         ccf_path=_resolve(ccf_template_path, [], "CCF template"),
         exaspim_template_path=_resolve(exaspim_template_path, [], "exaSPIM template"),
     )

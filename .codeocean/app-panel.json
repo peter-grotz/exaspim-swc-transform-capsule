@@ -11,14 +11,7 @@
     {
       "id": "processeddataset1",
       "name": "processed_dataset",
-      "description": "S3 URI or sample id under aind-open-data; ccf_alignment/ is staged automatically",
-      "type": "text",
-      "value_type": "string"
-    },
-    {
-      "id": "dfasset0000000001",
-      "name": "df_asset",
-      "description": "Mount dir of the displacement-field data asset, which also holds the exaSPIM->CCF transforms",
+      "description": "Optional. Processed imaging dataset: name, s3:// URI, or subject id. Resolved through DocDB first; if that fails, the image recorded in the reconstructions' refinement/data_process.json is used.",
       "type": "text",
       "value_type": "string"
     },

@@ -1,17 +1,21 @@
 """Transform exaSPIM SWC reconstructions from specimen space into CCF space."""
 
 import argparse
+import json
 import logging
 import os
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 import numpy as np
 from aind_exaspim_register_cells import RegistrationPipeline
 from allensdk.core.swc import Compartment, Morphology
+from exaspim_swc_transform.displacement import (
+    AmbiguousDisplacementFieldError,
+    fetch_displacement_field,
+)
 from exaspim_swc_transform.io_swc import read_swc
 from exaspim_swc_transform.reference import (
     ReferenceImages,
@@ -19,16 +23,19 @@ from exaspim_swc_transform.reference import (
     disable_overlay_normalization,
     resolve_geometry,
 )
-from exaspim_swc_transform.s3_stage import (
-    BUCKET_DEFAULT,
-    resolve_dataset,
-    s3_client,
-    stage_registration_bundle,
-)
+from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT, s3_client, stage_registration_bundle
+from exaspim_swc_transform.template_selection import LegacySampleError, select_template_to_ccf
 from exaspim_swc_transform.transform_resolution import ResolvedInputs, resolve_inputs
 
 from exaspim_swc_processing.acquisition import AcquisitionNotFoundError, resolve_acquisition
-from exaspim_swc_processing.registration import dataset_name
+from exaspim_swc_processing.datasets import (
+    DatasetMismatchError,
+    DatasetNotFoundError,
+    ProcessedDataset,
+    registry_sources,
+    resolve_processed_dataset,
+)
+from exaspim_swc_processing.naming import ReconstructionNameError, parse_stem
 from exaspim_swc_processing.stage import (
     UPSTREAM_STAGES,
     build_stage_process,
@@ -64,7 +71,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--swc-dir", default=os.environ.get("SWC_DIR", ""))
     parser.add_argument("--processed-dataset", default=os.environ.get("PROCESSED_DATASET", ""))
-    parser.add_argument("--df-asset", default=os.environ.get("DF_ASSET", ""))
     parser.add_argument("--experimenters", default=os.environ.get("EXPERIMENTERS", ""))
     parser.add_argument(
         "--fail-fast",
@@ -113,6 +119,29 @@ def transform_one(
     Morphology(transformed).save(str(destination))
 
 
+def cell_subjects(swc_dir: Path) -> set[str]:
+    """Return the subject ids named by the reconstructions to be transformed.
+
+    Parameters
+    ----------
+    swc_dir : Path
+        Directory of reconstructions, named ``<neuron>-<subject>-<annotator>.swc``.
+
+    Returns
+    -------
+    set[str]
+        Distinct subject ids. An unparseable name contributes ``"?<stem>"`` so it is
+        reported rather than silently ignored.
+    """
+    subjects: set[str] = set()
+    for path in swc_dir.rglob("*.swc"):
+        try:
+            subjects.add(parse_stem(path.stem).subject_id)
+        except ReconstructionNameError:
+            subjects.add(f"?{path.stem}")
+    return subjects
+
+
 def scratch_dir() -> Path:
     """Return this stage's scratch directory, created if needed.
 
@@ -152,49 +181,80 @@ def reconstruction_root(swc_dir: Path) -> Path:
     return DATA_DIR
 
 
-def locate_bundle(spec: str) -> str:
-    """Return a local directory holding the registration bundle.
+def recorded_image_path(asset_root: Path) -> str:
+    """Return the image the reconstructions were traced on, as their asset records it.
 
     Parameters
     ----------
-    spec : str
-        A mounted directory, an S3 URI, a dataset name, or a subject id.
+    asset_root : Path
+        The mounted reconstruction asset, holding ``refinement/``.
 
     Returns
     -------
     str
-        Path to the bundle, staged from S3 when it was not already local.
+        ``code.parameters.image_path`` from ``refinement/data_process.json``, e.g.
+        ``s3://aind-open-data/<dataset>/fusion/fused.zarr``, or ``""`` if absent.
     """
-    if spec and Path(spec).is_dir():
-        return spec
-    return stage_registration_bundle(spec)
+    record = asset_root / "refinement" / "data_process.json"
+    try:
+        payload = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.info("No readable %s; the traced image is unknown", record)
+        return ""
+    return str(((payload.get("code") or {}).get("parameters") or {}).get("image_path") or "")
 
 
-def locate_dataset(spec: str, bundle: str) -> tuple[str, str] | None:
-    """Identify the processed dataset the registration record belongs to.
+def locate_dataset(spec: str, image_path: str) -> ProcessedDataset | None:
+    """Resolve the processed dataset through the registry, falling back to S3.
 
     Parameters
     ----------
     spec : str
-        Whatever was passed as ``--processed-dataset``.
-    bundle : str
-        The local bundle directory, which may carry the name in its path.
+        Whatever was passed as ``--processed-dataset``: a dataset name, an ``s3://`` URI,
+        a mounted path, a subject id, or empty.
+    image_path : str
+        The image the reconstructions were traced on; used when DocDB does not resolve
+        ``spec``, and to check the result against.
 
     Returns
     -------
-    tuple[str, str] | None
-        Bucket and dataset name, or ``None`` when neither can be determined.
+    ProcessedDataset | None
+        Its name, bucket and subject, or ``None`` when nothing resolves it.
     """
-    bucket = urlparse(spec).netloc or BUCKET_DEFAULT
-    # A mounted path or URI carries the dataset name; a bare subject id needs a lookup.
-    dataset = dataset_name(spec, bundle)
-    if dataset:
-        return bucket, dataset
     try:
-        return resolve_dataset(spec)
-    except (ValueError, FileNotFoundError) as error:
-        logger.error("Could not determine the processed dataset from %r: %s", spec, error)
+        dataset = resolve_processed_dataset(
+            spec, registry_sources(), s3_client(), BUCKET_DEFAULT, image_path
+        )
+    except (DatasetNotFoundError, DatasetMismatchError) as error:
+        logger.error("%s", error)
         return None
+    logger.info(
+        "Processed dataset %s (subject %s) resolved from %s",
+        dataset.name,
+        dataset.subject_id,
+        dataset.source,
+    )
+    return dataset
+
+
+def locate_bundle(spec: str, dataset: ProcessedDataset) -> str:
+    """Return a local directory holding the sample-to-template transforms.
+
+    Parameters
+    ----------
+    spec : str
+        Whatever was passed as ``--processed-dataset``; used as-is if it is a directory.
+    dataset : ProcessedDataset
+        The resolved dataset, staged from S3 otherwise.
+
+    Returns
+    -------
+    str
+        Path to the bundle.
+    """
+    if spec and Path(spec).is_dir():
+        return spec
+    return stage_registration_bundle(dataset.name, dataset.subject_id, bucket=dataset.bucket)
 
 
 def load_reference_images(resolved: ResolvedInputs, bucket: str, dataset: str) -> ReferenceImages:
@@ -323,18 +383,57 @@ def run() -> int:
         )
         return 1
 
-    bundle = locate_bundle(args.processed_dataset)
-    located = locate_dataset(args.processed_dataset, bundle)
-    if located is None:
+    # DocDB is asked first; the reconstructions' own record of the image they were traced
+    # on is the fallback, and the check that the two agree.
+    dataset = locate_dataset(
+        args.processed_dataset, recorded_image_path(reconstruction_root(swc_dir))
+    )
+    if dataset is None:
         return 1
-    bucket, dataset = located
+    bundle = locate_bundle(args.processed_dataset, dataset)
+    sample_id = dataset.subject_id
+
+    # Every cell must belong to the sample whose registration is applied to it; a cell from
+    # another subject would be transformed with the wrong warp and still look plausible.
+    subjects = cell_subjects(swc_dir)
+    if subjects != {sample_id}:
+        logger.error(
+            "Reconstructions in %s name subject(s) %s, but the registration is for %s",
+            swc_dir,
+            ", ".join(sorted(subjects)) or "none",
+            sample_id,
+        )
+        return 1
+
+    # Pre-v1.5 samples keep the template-to-CCF version their CCF coordinates were
+    # originally produced with; legacy samples, whose version is unknown, are refused.
+    try:
+        template = select_template_to_ccf(sample_id)
+    except LegacySampleError as error:
+        logger.error("%s", error)
+        return 1
+    logger.info("Template-to-CCF: %s (%s)", template.asset, template.basis)
 
     # Nextflow hands the next stage only this stage's results, so the upstream outputs
     # have to be republished or they leave the chain.
     carried = carry_forward(reconstruction_root(swc_dir), RESULTS_DIR, UPSTREAM_STAGES)
     logger.info("Carried forward: %s", ", ".join(carried) or "nothing")
 
-    resolved = resolve_inputs(Path(bundle), args.df_asset)
+    # Manual CCF refinement is optional: applied when present, skipped and recorded when not.
+    try:
+        displacement = fetch_displacement_field(
+            s3_client(), dataset.bucket, dataset.name, scratch_dir() / "displacement"
+        )
+    except AmbiguousDisplacementFieldError as error:
+        logger.error("%s", error)
+        return 1
+
+    resolved = resolve_inputs(
+        Path(bundle),
+        dataset.subject_id,
+        template_to_ccf_asset=template.asset,
+        displacement_field=displacement.local_path,
+    )
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
@@ -343,7 +442,7 @@ def run() -> int:
     # mis-registers every cell without failing.
     try:
         acquisition_path, acquisition_source = resolve_acquisition(
-            dataset,
+            dataset.name,
             scratch_dir() / "acquisition.json",
             local_fallback=resolved.acquisition_file,
         )
@@ -373,7 +472,7 @@ def run() -> int:
         level=2,
         manual_transform_path=resolved.manual_transform_path,
     )
-    images = load_reference_images(resolved, bucket, dataset)
+    images = load_reference_images(resolved, dataset.bucket, dataset.name)
 
     found, failures = transform_all(swc_dir, pipeline, images, swc_out_dir, args.fail_fast)
     shutil.rmtree(debug_dir, ignore_errors=True)
@@ -392,7 +491,6 @@ def run() -> int:
             parameters={
                 "swc_dir": args.swc_dir,
                 "processed_dataset": args.processed_dataset,
-                "df_asset": args.df_asset,
             },
             output_parameters={
                 "aligned_swc_dir": str(swc_out_dir),
@@ -403,6 +501,12 @@ def run() -> int:
                 "acquisition_carried_forward": acquisition_carried,
                 "acquisition_source": acquisition_source.value if acquisition_source else "staged",
                 "stages_carried_forward": carried,
+                "processed_dataset_name": dataset.name,
+                "processed_dataset_source": dataset.source,
+                "displacement_field": displacement.source,
+                "displacement_field_status": displacement.status,
+                "template_to_ccf": template.asset,
+                "template_to_ccf_basis": template.basis,
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             notes=f"Transformed {transformed} of {found} reconstructions into CCF space.",
