@@ -6,6 +6,7 @@ processed-dataset root:
 
     s3://aind-open-data/<dataset>/acquisition.json
 
+
 The acquisition.json file is staged locally as:
 
     ccf_alignment/registration_metadata/acquisition_<dataset_id>.json
