@@ -20,15 +20,16 @@ import logging
 from dataclasses import dataclass
 
 import numpy as np
+
 from exaspim_swc_processing.reference import apply_geometry, reference_arrays
 from exaspim_swc_processing.registration import (
     HEADER_FETCH_BYTES,
     PROCESSING_RECORD,
+    RegistrationRecordError,
     VolumeGeometry,
     loaded_geometry,
     parse_nifti_geometry,
     parse_registration_record,
-    RegistrationRecordError,
     reconcile,
     registration_volume_key,
     resampled_geometry,

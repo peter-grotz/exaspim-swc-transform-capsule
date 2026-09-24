@@ -5,7 +5,7 @@ pip list > /results/pip_list.txt
 
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 # Code Ocean's App Builder passes its parameters as ordered values, not flags:
-#   ./run <swc_dir> <processed_dataset> <df_asset> <experimenters>
+#   ./run <swc_dir> <processed_dataset> <experimenters>
 # A direct command-line invocation passes flags instead. Accept both, so the same
 # entry point works from the pipeline and from a shell. Blank slots are dropped: a stage
 # with no parameters set receives only empty strings, which argparse would reject.
@@ -13,8 +13,7 @@ if [ "${1#-}" = "${1:-}" ]; then
   args=()
   [ -n "${1:-}" ] && args+=(--swc-dir "${1}")
   [ -n "${2:-}" ] && args+=(--processed-dataset "${2}")
-  [ -n "${3:-}" ] && args+=(--df-asset "${3}")
-  [ -n "${4:-}" ] && args+=(--experimenters "${4}")
+  [ -n "${3:-}" ] && args+=(--experimenters "${3}")
   set -- ${args[@]+"${args[@]}"}
 fi
 
