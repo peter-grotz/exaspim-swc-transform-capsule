@@ -6,9 +6,6 @@ processed-dataset root:
 
     s3://aind-open-data/<dataset>/acquisition.json
 
-This downloads ONLY the five files the transform needs, avoiding the large moved
-volumes / zarrs in registration_metadata/.
-
 The acquisition.json file is staged locally as:
 
     ccf_alignment/registration_metadata/acquisition_<dataset_id>.json
