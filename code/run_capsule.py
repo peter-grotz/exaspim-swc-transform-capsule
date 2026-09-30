@@ -24,8 +24,11 @@ from exaspim_swc_transform.reference import (
     resolve_geometry,
 )
 from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT, s3_client, stage_registration_bundle
-from exaspim_swc_transform.template_selection import LegacySampleError, select_template_to_ccf
-from exaspim_swc_transform.transform_resolution import ResolvedInputs, resolve_inputs
+from exaspim_swc_transform.transform_resolution import (
+    TEMPLATE_TO_CCF_ASSET,
+    ResolvedInputs,
+    resolve_inputs,
+)
 
 from exaspim_swc_processing.acquisition import AcquisitionNotFoundError, resolve_acquisition
 from exaspim_swc_processing.datasets import (
@@ -405,15 +408,6 @@ def run() -> int:
         )
         return 1
 
-    # Pre-v1.5 samples keep the template-to-CCF version their CCF coordinates were
-    # originally produced with; legacy samples, whose version is unknown, are refused.
-    try:
-        template = select_template_to_ccf(sample_id)
-    except LegacySampleError as error:
-        logger.error("%s", error)
-        return 1
-    logger.info("Template-to-CCF: %s (%s)", template.asset, template.basis)
-
     # Nextflow hands the next stage only this stage's results, so the upstream outputs
     # have to be republished or they leave the chain.
     carried = carry_forward(reconstruction_root(swc_dir), RESULTS_DIR, UPSTREAM_STAGES)
@@ -431,7 +425,6 @@ def run() -> int:
     resolved = resolve_inputs(
         Path(bundle),
         dataset.subject_id,
-        template_to_ccf_asset=template.asset,
         displacement_field=displacement.local_path,
     )
     output_root = RESULTS_DIR / OUTPUT_STAGE
@@ -505,8 +498,7 @@ def run() -> int:
                 "processed_dataset_source": dataset.source,
                 "displacement_field": displacement.source,
                 "displacement_field_status": displacement.status,
-                "template_to_ccf": template.asset,
-                "template_to_ccf_basis": template.basis,
+                "template_to_ccf": TEMPLATE_TO_CCF_ASSET,
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             notes=f"Transformed {transformed} of {found} reconstructions into CCF space.",
