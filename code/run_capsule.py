@@ -525,10 +525,12 @@ def run() -> int:
         )
 
     # Inputs say what was applied: the registration, the template-to-CCF asset, and the
-    # displacement field when there was one. Lookup details are in the log above.
+    # displacement field when there was one. The field is also recorded as a parameter,
+    # null when none was found, so the record always answers whether one was applied.
+    field = displacement.source if displacement.local_path else None
     applied = [f"s3://{dataset.bucket}/{dataset.name}/ccf_alignment/", f"/data/{template}"]
-    if displacement.local_path:
-        applied.append(displacement.source)
+    if field:
+        applied.append(field)
     write_stage_process(
         build_stage_process(
             STEP_NAME,
@@ -536,6 +538,7 @@ def run() -> int:
             started,
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             input_data=applied,
+            parameters={"displacement_field": field},
         ),
         output_root,
     )
