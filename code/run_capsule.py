@@ -45,6 +45,7 @@ from exaspim_swc_processing.registration import (
     recorded_template_to_ccf,
 )
 from exaspim_swc_processing.stage import (
+    PROCESSED_DATASET_FILE,
     UPSTREAM_STAGES,
     build_stage_process,
     carry_forward,
@@ -518,42 +519,28 @@ def run() -> int:
     found, failures = transform_all(swc_dir, pipeline, images, swc_out_dir, args.fail_fast)
     shutil.rmtree(debug_dir, ignore_errors=True)
     transformed = found - len(failures)
-    acquisition_carried = carry_acquisition(str(acquisition_path), output_root)
+    if not carry_acquisition(str(acquisition_path), output_root):
+        logger.warning(
+            "acquisition.json was not carried forward; resample will infer the voxel scale"
+        )
 
+    # Inputs say what was applied: the registration, the template-to-CCF asset, and the
+    # displacement field when there was one. Lookup details are in the log above.
+    applied = [f"s3://{dataset.bucket}/{dataset.name}/ccf_alignment/", f"/data/{template}"]
+    if displacement.local_path:
+        applied.append(displacement.source)
     write_stage_process(
         build_stage_process(
             STEP_NAME,
-            resolve_code(
-                "exaspim-swc-transform",
-                url="https://github.com/peter-grotz/exaspim-swc-transform-capsule",
-            ),
-            start_time=started,
-            output_path=OUTPUT_STAGE,
-            parameters={
-                "swc_dir": args.swc_dir,
-                "processed_dataset": args.processed_dataset,
-            },
-            output_parameters={
-                "aligned_swc_dir": str(swc_out_dir),
-                "input_swc_count": found,
-                "transformed_swc_count": transformed,
-                "failed": failures,
-                "dataset_id": resolved.dataset_id,
-                "acquisition_carried_forward": acquisition_carried,
-                "acquisition_source": acquisition_source.value if acquisition_source else "staged",
-                "stages_carried_forward": carried,
-                "processed_dataset_name": dataset.name,
-                "processed_dataset_source": dataset.source,
-                "displacement_field": displacement.source,
-                "displacement_field_status": displacement.status,
-                "template_to_ccf": template,
-                "template_to_ccf_source": f"s3://{dataset.bucket}/{dataset.name}/{PROCESSING_RECORD}",
-            },
+            resolve_code(url="https://github.com/peter-grotz/exaspim-swc-transform-capsule"),
+            started,
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
-            notes=f"Transformed {transformed} of {found} reconstructions into CCF space.",
+            input_data=applied,
         ),
         output_root,
     )
+    # Not metadata: tells packaging which dataset is the parent.
+    (output_root / PROCESSED_DATASET_FILE).write_text(dataset.name, encoding="utf-8")
 
     logger.info("Transformed %d of %d", transformed, found)
     return 1 if failures else 0
