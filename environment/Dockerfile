@@ -23,4 +23,4 @@ RUN mamba install -y python=3.11 && mamba clean -afy
 # new. Bump the SHA whenever the library changes.
 RUN pip install -U --no-cache-dir \
     "git+https://github.com/AllenNeuralDynamics/aind_exaspim_register_cells.git" \
-    "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@793f1999795253d48e29e35964ef5ef6d078e262"
+    "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@b37a0855fb01e5f2828d78b7afb1d9078335a879"

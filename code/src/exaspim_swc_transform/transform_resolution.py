@@ -14,8 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-TEMPLATE_TO_CCF_ASSET = "reg_exaspim_template_to_ccf_25um_v1.5"
-"""Template-to-CCF asset applied to every sample; it must be connected to this process."""
 DEFAULT_CCF_TEMPLATE = "/data/allen_mouse_ccf/average_template/average_template_10.nii.gz"
 DEFAULT_EXASPIM_TEMPLATE = (
     "/data/exaspim_template_7subjects_nomask_10um_round6_template_only/fixed_median.nii.gz"
@@ -124,7 +122,7 @@ def resolve_inputs(
     *,
     ccf_template_path: str = DEFAULT_CCF_TEMPLATE,
     exaspim_template_path: str = DEFAULT_EXASPIM_TEMPLATE,
-    template_to_ccf_asset: str = TEMPLATE_TO_CCF_ASSET,
+    template_to_ccf_asset: str,
     displacement_field: str = "",
 ) -> ResolvedInputs:
     """Locate every input the transform needs.
@@ -139,9 +137,9 @@ def resolve_inputs(
         CCF average template.
     exaspim_template_path : str, optional
         exaSPIM template.
-    template_to_ccf_asset : str, optional
-        Mount name of the template-to-CCF data asset; it must be connected to this
-        process.
+    template_to_ccf_asset : str
+        Mount name of the template-to-CCF data asset, as the sample's registration record
+        names it; it must be connected to this process.
     displacement_field : str, optional
         Local path of the manual CCF refinement field, or an empty string for none. Located by
         :mod:`exaspim_swc_transform.displacement`.

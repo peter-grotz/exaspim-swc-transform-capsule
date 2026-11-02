@@ -25,7 +25,7 @@ from exaspim_swc_transform.reference import (
 )
 from exaspim_swc_transform.s3_stage import BUCKET_DEFAULT, s3_client, stage_registration_bundle
 from exaspim_swc_transform.transform_resolution import (
-    TEMPLATE_TO_CCF_ASSET,
+    MissingInput,
     ResolvedInputs,
     resolve_inputs,
 )
@@ -39,6 +39,11 @@ from exaspim_swc_processing.datasets import (
     resolve_processed_dataset,
 )
 from exaspim_swc_processing.naming import ReconstructionNameError, parse_stem
+from exaspim_swc_processing.registration import (
+    PROCESSING_RECORD,
+    RegistrationRecordError,
+    recorded_template_to_ccf,
+)
 from exaspim_swc_processing.stage import (
     UPSTREAM_STAGES,
     build_stage_process,
@@ -240,6 +245,39 @@ def locate_dataset(spec: str, image_path: str) -> ProcessedDataset | None:
     return dataset
 
 
+def recorded_template(dataset: ProcessedDataset) -> str | None:
+    """Return the template-to-CCF asset the sample's registration recorded using.
+
+    The CCF products the registration published were made with that asset, so the
+    reconstructions are transformed with the same one and line up with them.
+
+    Parameters
+    ----------
+    dataset : ProcessedDataset
+        The resolved processed dataset.
+
+    Returns
+    -------
+    str | None
+        The asset's mount name, or ``None`` (logged) when the record is missing or names
+        none or several.
+    """
+    uri = f"s3://{dataset.bucket}/{dataset.name}/{PROCESSING_RECORD}"
+    try:
+        body = s3_client().get_object(
+            Bucket=dataset.bucket, Key=f"{dataset.name}/{PROCESSING_RECORD}"
+        )
+        template = recorded_template_to_ccf(json.loads(body["Body"].read()))
+    except RegistrationRecordError as error:
+        logger.error("%s: %s", uri, error)
+        return None
+    except Exception as error:  # noqa: BLE001 - an absent or unreadable record is the same failure
+        logger.error("Cannot read the registration record %s (%s)", uri, type(error).__name__)
+        return None
+    logger.info("Template-to-CCF from the registration record: %s", template)
+    return template
+
+
 def locate_bundle(spec: str, dataset: ProcessedDataset) -> str:
     """Return a local directory holding the sample-to-template transforms.
 
@@ -422,11 +460,21 @@ def run() -> int:
         logger.error("%s", error)
         return 1
 
-    resolved = resolve_inputs(
-        Path(bundle),
-        dataset.subject_id,
-        displacement_field=displacement.local_path,
-    )
+    # Use the template-to-CCF asset the registration used, so the reconstructions line up
+    # with the CCF products it published. That asset must be connected to this process.
+    template = recorded_template(dataset)
+    if template is None:
+        return 1
+    try:
+        resolved = resolve_inputs(
+            Path(bundle),
+            dataset.subject_id,
+            template_to_ccf_asset=template,
+            displacement_field=displacement.local_path,
+        )
+    except MissingInput as error:
+        logger.error("%s -- is %s connected to this process?", error, template)
+        return 1
     output_root = RESULTS_DIR / OUTPUT_STAGE
     swc_out_dir = output_root / "aligned_swcs"
 
@@ -498,7 +546,8 @@ def run() -> int:
                 "processed_dataset_source": dataset.source,
                 "displacement_field": displacement.source,
                 "displacement_field_status": displacement.status,
-                "template_to_ccf": TEMPLATE_TO_CCF_ASSET,
+                "template_to_ccf": template,
+                "template_to_ccf_source": f"s3://{dataset.bucket}/{dataset.name}/{PROCESSING_RECORD}",
             },
             experimenters=[e.strip() for e in args.experimenters.split(",") if e.strip()],
             notes=f"Transformed {transformed} of {found} reconstructions into CCF space.",
