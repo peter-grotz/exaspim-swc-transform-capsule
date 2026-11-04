@@ -16,7 +16,7 @@ COPY git-ask-pass /
 # The base tag is stepped down rather than chosen directly because the only mambaforge3
 # tags observed in this deployment are python3.10.12 and python3.12.4. If a 3.11 tag
 # exists, use it directly and drop this line.
-RUN mamba install -y python=3.11 && mamba clean -afy
+RUN mamba install -y python=3.11 && rm -rf /opt/conda/pkgs/* /root/.cache/mamba /root/.cache/conda
 
 # The library is pinned to a commit, not a branch: the layer is keyed on the text of
 # this command, so '@dev' would reuse a cached layer and silently install nothing
