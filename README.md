@@ -5,15 +5,20 @@ Transforms exaSPIM SWC reconstructions from specimen space into CCF space, using
 
 ## Usage
 
-Reads specimen-space SWCs and the registration transforms, writes CCF-space SWCs to
-`/results/alignment/aligned_swcs` with a `data_process.json` beside them.
+Reads the specimen-space SWCs in a `refinement/final-world/` directory and the sample's
+registration, and writes CCF-space SWCs to `/results/alignment/aligned_swcs` with a
+`data_process.json` beside them.
 
-A reconstruction that fails to transform is logged and skipped so one bad cell does not
-lose the run; the count and the failed stems are recorded in the stage metadata, and the
-capsule exits non-zero. Pass `--fail-fast` to abort on the first failure instead.
+Parameters, in App Builder order:
 
-**No GPU.** The previous pipeline requested one, but nothing here uses CUDA and antspyx is
-CPU-only.
+1. `swc_dir`: the `final-world/` directory.
+2. `processed_dataset`: optional; resolved from the reconstructions' record if empty.
+3. `experimenters`: comma-separated.
+4. `allow_no_displacement_field`: the run fails when the sample has no manual CCF
+   refinement in `<dataset>/manual_ccf_refinement/`, unless this is `True`.
+
+A reconstruction that fails to transform is logged and skipped, and the capsule exits
+non-zero. Pass `--fail-fast` to abort on the first failure instead.
 
 **Python 3.11.** `allensdk` pins `numpy<1.24`, which cannot build on 3.12.
 

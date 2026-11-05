@@ -23,4 +23,4 @@ RUN mamba install -y python=3.11 && rm -rf /opt/conda/pkgs/* /root/.cache/mamba 
 # new. Bump the SHA whenever the library changes.
 RUN pip install -U --no-cache-dir \
     "git+https://github.com/AllenNeuralDynamics/aind_exaspim_register_cells.git" \
-    "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@b37a0855fb01e5f2828d78b7afb1d9078335a879"
+    "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@946f7a47c975fdcb189f6e60163d8125741227dd"
