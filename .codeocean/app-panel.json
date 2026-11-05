@@ -1,26 +1,33 @@
 {
-  "version": 1,
-  "parameters": [
-    {
-      "id": "swcdir00000000001",
-      "name": "swc_dir",
-      "description": "Physical-space reconstructions, i.e. <asset>/refinement/final-world. Not final-voxel: voxel coordinates are rejected.",
-      "type": "text",
-      "value_type": "string"
-    },
-    {
-      "id": "processeddataset1",
-      "name": "processed_dataset",
-      "description": "Optional. Processed imaging dataset: name, s3:// URI, or subject id. Resolved through DocDB first; if that fails, the image recorded in the reconstructions' refinement/data_process.json is used.",
-      "type": "text",
-      "value_type": "string"
-    },
-    {
-      "id": "experimenters00001",
-      "name": "experimenters",
-      "description": "Comma-separated names recorded on this stage",
-      "type": "text",
-      "value_type": "string"
-    }
-  ]
+	"version": 1,
+	"parameters": [
+		{
+			"id": "swcdir00000000001",
+			"name": "swc_dir",
+			"description": "Physical-space reconstructions, i.e. \u003casset\u003e/refinement/final-world. Not final-voxel: voxel coordinates are rejected.",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "processeddataset1",
+			"name": "processed_dataset",
+			"description": "Optional. Processed imaging dataset: name, s3:// URI, or subject id. Resolved through DocDB first; if that fails, the image recorded in the reconstructions' refinement/data_process.json is used.",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "experimenters00001",
+			"name": "experimenters",
+			"description": "Comma-separated names recorded on this stage",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "HBqu5X5PSzD5AfL4",
+			"name": "allow_no_displacement_field",
+			"description": "Set to True to transform without a manual CCF refinement when none exists. Otherwise the run fails if \u003cdataset\u003e/manual_ccf_refinement/ has no .nrrd.",
+			"type": "text",
+			"value_type": "string"
+		}
+	]
 }
