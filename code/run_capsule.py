@@ -113,9 +113,10 @@ def transform_one(
     coords = np.array([[c["x"], c["y"], c["z"]] for c in morph.compartment_list])
     scale = list(point_scale or UNROTATED_POINT_SCALE)
     # preprocess_coords' steps without it, since it reorders the scale for every sample.
+    # check_orientation swaps the scale list in place, so it gets a copy.
     indices = pipeline.soma_physical_to_index(coords, pipeline.level + 3)
     oriented, _ = pipeline.check_orientation(
-        pipeline.acquisition_file, indices, images.brain, scale
+        pipeline.acquisition_file, indices, images.brain, list(scale)
     )
     prepped = pipeline.resample_isotropic(oriented, scale)
     idx_pts, _ = pipeline.apply_transforms_to_points(
