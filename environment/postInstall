@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -ex
+
+# Python 3.11 goes in its own environment. Changing the base environment's Python
+# replaces libraries mamba itself is linked against, which breaks every later mamba
+# call. allensdk 2.16.2 needs numpy<1.24, which cannot build on 3.12.
+mamba create -y -n transform -c conda-forge \
+  python=3.11 \
+  pip
+
+mamba clean -afy
+
+# Both are pinned to commits so a cached layer cannot hide a change.
+/opt/conda/envs/transform/bin/python -m pip install --no-cache-dir \
+  "git+https://github.com/AllenNeuralDynamics/aind_exaspim_register_cells.git@6043556841599d2dad9f360c1c681ee8d9cc72de" \
+  "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@946f7a47c975fdcb189f6e60163d8125741227dd"
