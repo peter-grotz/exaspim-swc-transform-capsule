@@ -13,4 +13,4 @@ mamba clean -afy
 # Both are pinned to commits so a cached layer cannot hide a change.
 /opt/conda/envs/transform/bin/python -m pip install --no-cache-dir \
   "git+https://github.com/AllenNeuralDynamics/aind_exaspim_register_cells.git@6043556841599d2dad9f360c1c681ee8d9cc72de" \
-  "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@946f7a47c975fdcb189f6e60163d8125741227dd"
+  "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@b796d8794ddbd814800a12c65e8125910c0d7340"
