@@ -70,6 +70,10 @@ CCF_RESOLUTION_UM = 10.0
 REGISTRATION_LEVEL = 2
 """Pyramid level of the 10 um registration pass, which the registration capsule hard-codes."""
 
+UNROTATED_POINT_SCALE = (0.0101 / 0.01, 0.0101 / 0.01, 0.0135 / 0.01)
+"""Level-2 scale for records without ``applied_spacing_mm``. Those registrations applied it
+without reordering, so it must not go through the library's axis swaps."""
+
 logger = logging.getLogger(STEP_NAME)
 
 
@@ -102,19 +106,18 @@ def transform_one(
 ) -> None:
     """Transform one reconstruction into CCF space and write it.
 
-    ``point_scale`` replaces the library's fixed scale, which matches only registrations
-    that predate ``applied_spacing_mm``; ``None`` keeps the fixed scale.
+    ``point_scale`` is the recorded ``applied_spacing_mm`` as a scale, already in the
+    reoriented axis order; ``None`` uses :data:`UNROTATED_POINT_SCALE`.
     """
     morph = read_swc(swc_path)
     coords = np.array([[c["x"], c["y"], c["z"]] for c in morph.compartment_list])
-    if point_scale is None:
-        # cell_filename=None skips the overlay rendering.
-        prepped = pipeline.preprocess_coords(coords, images.brain, images.resampled, None)
-    else:
-        # preprocess_coords' own steps, with the scale the registration applied.
-        indices = pipeline.soma_physical_to_index(coords, pipeline.level + 3)
-        oriented = pipeline.check_orientation(pipeline.acquisition_file, indices, images.brain)
-        prepped = pipeline.resample_isotropic(oriented, list(point_scale))
+    scale = list(point_scale or UNROTATED_POINT_SCALE)
+    # preprocess_coords' steps without it, since it reorders the scale for every sample.
+    indices = pipeline.soma_physical_to_index(coords, pipeline.level + 3)
+    oriented, _ = pipeline.check_orientation(
+        pipeline.acquisition_file, indices, images.brain, scale
+    )
+    prepped = pipeline.resample_isotropic(oriented, scale)
     idx_pts, _ = pipeline.apply_transforms_to_points(
         prepped, images.resampled_image, images.exaspim_template, images.ccf, None
     )
@@ -278,7 +281,7 @@ def run() -> int:
         return 1
     logger.info("Template-to-CCF from the registration record: %s", template)
     if point_scale is None:
-        logger.info("No applied_spacing_mm recorded; using the fixed point scale")
+        logger.info("No applied_spacing_mm recorded; using %s unrotated", UNROTATED_POINT_SCALE)
     else:
         logger.info("Point scale from applied_spacing_mm: %s", point_scale)
 
