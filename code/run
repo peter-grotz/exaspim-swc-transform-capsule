@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -ex
 
+source /opt/conda/etc/profile.d/conda.sh
+conda activate transform
 pip list > /results/pip_list.txt
 
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"

@@ -6,21 +6,5 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG GIT_ASKPASS
 COPY git-ask-pass /
 
-# This stage runs on Python 3.11, not the base image's 3.12.
-#
-# allensdk 2.16.2 -- the newest release, and a hard dependency of
-# aind_exaspim_register_cells -- caps numpy<1.24, and numpy 1.23.5 cannot build on 3.12
-# because it needs distutils, removed from the stdlib there. Upstream fixed this in
-# AllenInstitute/AllenSDK#2769 but has not released since Nov 2023.
-#
-# The base tag is stepped down rather than chosen directly because the only mambaforge3
-# tags observed in this deployment are python3.10.12 and python3.12.4. If a 3.11 tag
-# exists, use it directly and drop this line.
-RUN mamba install -y python=3.11 && rm -rf /opt/conda/pkgs/* /root/.cache/mamba /root/.cache/conda
-
-# The library is pinned to a commit, not a branch: the layer is keyed on the text of
-# this command, so '@dev' would reuse a cached layer and silently install nothing
-# new. Bump the SHA whenever the library changes.
-RUN pip install -U --no-cache-dir \
-    "git+https://github.com/AllenNeuralDynamics/aind_exaspim_register_cells.git" \
-    "exaspim-swc-processing @ git+https://github.com/peter-grotz/exaspim-swc-processing.git@946f7a47c975fdcb189f6e60163d8125741227dd"
+COPY postInstall /
+RUN /bin/bash /postInstall
