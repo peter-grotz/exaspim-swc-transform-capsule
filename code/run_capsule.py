@@ -36,6 +36,7 @@ from exaspim_swc_processing.datasets import (
 from exaspim_swc_processing.naming import ReconstructionNameError, parse_stem
 from exaspim_swc_processing.registration import (
     PROCESSING_RECORD,
+    RegistrationPass,
     RegistrationRecordError,
     parse_registration_record,
     recorded_template_to_ccf,
@@ -97,12 +98,23 @@ def transform_one(
     pipeline: RegistrationPipeline,
     images: ReferenceImages,
     destination: Path,
+    point_scale: tuple[float, float, float] | None,
 ) -> None:
-    """Transform one reconstruction into CCF space and write it."""
+    """Transform one reconstruction into CCF space and write it.
+
+    ``point_scale`` replaces the library's fixed scale, which matches only registrations
+    that predate ``applied_spacing_mm``; ``None`` keeps the fixed scale.
+    """
     morph = read_swc(swc_path)
     coords = np.array([[c["x"], c["y"], c["z"]] for c in morph.compartment_list])
-    # cell_filename=None skips the overlay rendering.
-    prepped = pipeline.preprocess_coords(coords, images.brain, images.resampled, None)
+    if point_scale is None:
+        # cell_filename=None skips the overlay rendering.
+        prepped = pipeline.preprocess_coords(coords, images.brain, images.resampled, None)
+    else:
+        # preprocess_coords' own steps, with the scale the registration applied.
+        indices = pipeline.soma_physical_to_index(coords, pipeline.level + 3)
+        oriented = pipeline.check_orientation(pipeline.acquisition_file, indices, images.brain)
+        prepped = pipeline.resample_isotropic(oriented, list(point_scale))
     idx_pts, _ = pipeline.apply_transforms_to_points(
         prepped, images.resampled_image, images.exaspim_template, images.ccf, None
     )
@@ -175,12 +187,12 @@ def read_registration_record(client, dataset: ProcessedDataset) -> dict | None:
         return None
 
 
-def recorded_level(record: dict) -> int:
-    """The level the 10 um pass records, or the hard-coded level if the record predates it."""
+def recorded_pass(record: dict) -> RegistrationPass | None:
+    """The record's 10 um pass, or ``None`` for records that predate its parameters."""
     try:
-        return parse_registration_record(record).level
+        return parse_registration_record(record)
     except RegistrationRecordError:
-        return REGISTRATION_LEVEL
+        return None
 
 
 def existing(path: Path, what: str) -> str | None:
@@ -196,6 +208,7 @@ def transform_all(
     pipeline: RegistrationPipeline,
     images: ReferenceImages,
     destination: Path,
+    point_scale: tuple[float, float, float] | None,
     fail_fast: bool,
 ) -> list[str]:
     """Transform every reconstruction and return the stems that failed."""
@@ -203,7 +216,9 @@ def transform_all(
     failures: list[str] = []
     for swc_path in swc_paths:
         try:
-            transform_one(swc_path, pipeline, images, destination / f"{swc_path.stem}.swc")
+            transform_one(
+                swc_path, pipeline, images, destination / f"{swc_path.stem}.swc", point_scale
+            )
         except Exception as error:  # noqa: BLE001 - one bad cell must not lose the run
             if fail_fast:
                 raise
@@ -246,7 +261,9 @@ def run() -> int:
     record = read_registration_record(client, dataset)
     if record is None:
         return 1
-    level = recorded_level(record)
+    pass_ = recorded_pass(record)
+    level = pass_.level if pass_ else REGISTRATION_LEVEL
+    point_scale = pass_.point_scale if pass_ else None
     if level != REGISTRATION_LEVEL:
         logger.error(
             "The registration record states level %d; this stage supports only level %d",
@@ -260,6 +277,10 @@ def run() -> int:
         logger.error("s3://%s/%s: %s", dataset.bucket, dataset.name, error)
         return 1
     logger.info("Template-to-CCF from the registration record: %s", template)
+    if point_scale is None:
+        logger.info("No applied_spacing_mm recorded; using the fixed point scale")
+    else:
+        logger.info("Point scale from applied_spacing_mm: %s", point_scale)
 
     try:
         displacement = fetch_displacement_field(
@@ -328,7 +349,7 @@ def run() -> int:
 
     output_root = RESULTS_DIR / OUTPUT_STAGE
     failures = transform_all(
-        swc_paths, pipeline, images, output_root / "aligned_swcs", args.fail_fast
+        swc_paths, pipeline, images, output_root / "aligned_swcs", point_scale, args.fail_fast
     )
     shutil.rmtree(scratch_output, ignore_errors=True)
 
