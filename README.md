@@ -29,5 +29,5 @@ non-zero. Pass `--fail-fast` to abort on the first failure instead.
 ## Installation
 
 Metadata and naming come from
-[exaspim-swc-processing](https://github.com/peter-grotz/exaspim-swc-processing); the ANTs
+[exaspim-swc-processing](https://github.com/AllenNeuralDynamics/exaspim-swc-processing); the ANTs
 stack stays here because of its pinned numeric dependencies.
